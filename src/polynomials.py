@@ -5,17 +5,20 @@ def get_charlier_polynomials(x_grid, mu, K=4):
     """논문 Section 2.3: 삼항 재귀식 기반 Charlier 다항식 재현"""
     N = len(x_grid)
     C = np.zeros((N, K + 1))
+    #Poisson-Charlier의 초기값
+    #삼항재귀식사용을 위해서 0차와 1차의 다항식을 미리 설정
     C[:, 0] = 1.0
     if K >= 1: C[:, 1] = 1.0 - (x_grid / mu)
-    
+
+    # mu*C_{n+1} = (mu + n - x)*Cn - n*C_{n-1} 삼항재귀식을 계산
     for n in range(1, K):
-        # mu*C_{n+1} = (mu + n - x)*Cn - n*C_{n-1}
         C[:, n+1] = ((mu + n - x_grid) * C[:, n] - n * C[:, n-1]) / mu
         
-    # Orthonormalization: psi_n = C_n / sqrt(n! / mu^n)
+    # Orthonormalization: psi_n = C_n / sqrt(n! / mu^n) #직교정규화를 해줌 
+    # 직교정규화를 해줌으로써 기초 분포 대비 왜도와 첨도가 얼마나 벗어났는지를 나타내는 표준화된 지표가 됨
     psi = np.zeros_like(C)
     for n in range(K + 1):
-        ln_hn = gammaln(n + 1) - n * np.log(mu)
+        ln_hn = gammaln(n + 1) - n * np.log(mu) 
         psi[:, n] = C[:, n] / np.sqrt(np.exp(ln_hn))
     return psi
 

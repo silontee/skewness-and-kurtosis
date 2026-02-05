@@ -3,21 +3,23 @@ import numpy as np
 class RigorousLinearTiltModel:
     def __init__(self, baseline_pmf_func, basis_matrix):
         self.w_func = baseline_pmf_func
-        self.psi = basis_matrix # shape: (N, K+1)
+        self.psi = basis_matrix 
         self.K = basis_matrix.shape[1] - 1
         self.theta = np.zeros(self.K)
 
+
+    """선택적 파라미터(Isolation Property)를 반영한 로그 우도"""
     def get_log_likelihood(self, data, theta_active, active_indices):
-        """선택적 파라미터(Isolation Property)를 반영한 로그 우도"""
         full_theta = np.zeros(self.K)
         for i, idx in enumerate(active_indices):
             full_theta[idx] = theta_active[i]
             
-        # Z(x; theta) = 1 + sum theta_k * psi_k(x)
+       
         z_vals = 1.0 + np.dot(self.psi[data, 1:], full_theta)
-        
+        # 확률이 음수가 되면 절대적인 그 그 값을 극도로 낮은 값으로 반환
+        # x값이 커질때 혹시나 음수성을 갖게 될수도 있으므로 pmf를 정의하기위헤 비음수성 정의제약을 걸어둠
         if np.any(z_vals <= 0):
-            return -1e15 # Feasibility 위반 시 극소값 반환
+            return -1e15 
             
         return np.sum(np.log(z_vals))
 
