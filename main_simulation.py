@@ -2,71 +2,137 @@ import os
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from scipy.stats import nbinom
+from scipy.optimize import minimize
+from scipy.stats import nbinom, poisson
 
-# src 모듈 임포트
+# 기존 모듈 임포트
 from src.distributions import get_poisson_baseline, get_nb_baseline
 from src.polynomials import get_charlier_polynomials, get_meixner_polynomials
 from src.models import RigorousLinearTiltModel
 from src.optimizer import RigorousOptimizer, get_rigorous_xmax
 
-def generate_dominant_peak_data(n=10000, p=0.92):
-    """
-    첫 번째 봉우리가 92%를 차지하는 'Dominant Peak' 시나리오
-    Group 1: mu=10, var=15 (92% 비중) -> NB가 여기 완벽히 타겟팅됨
-    Group 2: mu=50, var=100 (8% 비중) -> 아주 작은 두 번째 봉우리(혹) 형성
-    """
-    np.random.seed(403)
-    # n=beta, p=1-c
-    data_a = nbinom.rvs(n=20, p=0.666, size=int(n * p)) # mu=10
-    data_b = nbinom.rvs(n=50, p=0.5, size=n - int(n * p)) # mu=50
-    return np.concatenate([data_a, data_b])
+# ==========================================
+# 💡 [Patch Section] 수치 안정성 유지 (기존 로직 유지)
+# ==========================================
 
-def run_simulation_v5():
-    RESULT_DIR = r"D:\skewness_kurtosis\result"
+class StableOptimizer(RigorousOptimizer):
+    def optimize(self):
+        x0 = np.full(len(self.active_indices), 1e-5)
+        K_val = self.model.psi.shape[1] - 1
+        bounds = [(-0.8, 0.8) for _ in range(len(self.active_indices))]
+
+        def constraint(t_active):
+            full_theta = np.zeros(K_val + 1)
+            for i, idx in enumerate(self.active_indices):
+                full_theta[idx] = t_active[i]
+            z = 1.0 + np.dot(self.model.psi[:, 1:], full_theta[1:])
+            return np.min(z) - 1e-9
+
+        res = minimize(
+            fun=lambda t: -self.model.get_log_likelihood(self.data, t, self.active_indices),
+            x0=x0, method='SLSQP', bounds=bounds,
+            constraints={'type': 'ineq', 'fun': constraint},
+            options={'ftol': 1e-12, 'maxiter': 200}
+        )
+        final_theta = np.zeros(K_val + 1)
+        for i, idx in enumerate(self.active_indices):
+            final_theta[idx] = res.x[i]
+        return final_theta
+
+def patched_pmf(self):
+    K_val = self.psi.shape[1] - 1
+    t_vec = self.theta[1:] if len(self.theta) == K_val + 1 else self.theta
+    tilt = 1.0 + np.dot(self.psi[:, 1:], t_vec)
+    w_vals = self.w_func(np.arange(len(self.psi)))
+    raw = np.maximum(w_vals * tilt, 0)
+    return raw / np.sum(raw)
+
+RigorousLinearTiltModel.pmf = patched_pmf
+
+# ==========================================
+# 💡 [Data Section] Ratio 2 데이터 생성 (기존 로직 유지)
+# ==========================================
+
+def generate_ratio2_data(n=10000):
+    np.random.seed(403)
+    data_mix = np.concatenate([
+        poisson.rvs(mu=7, size=int(n * 0.5)),
+        poisson.rvs(mu=13, size=n - int(n * 0.5))
+    ])
+    return data_mix
+
+# ==========================================
+# 💡 [Main Section] 파일명 및 리포트 수정
+# ==========================================
+
+def run_simulation():
+    # 1. 경로 설정 (simulation_results)
+    RESULT_DIR = r"D:\skewness_kurtosis\simulation_results"
     os.makedirs(RESULT_DIR, exist_ok=True)
     
-    # 1. 데이터 생성
-    data = generate_dominant_peak_data()
-    n_samples = len(data)
-    max_val = np.max(data)
+    print("🚀 시뮬레이션 실행 중...")
+    data = generate_ratio2_data()
+    n_samples, max_val = len(data), np.max(data)
+    log_n = np.log(n_samples)
     
-    # 2. Baseline & NBM Fitting
+    # 2. Poisson & PC (theta2=0 Fixed)
+    mu_base, p_pmf = get_poisson_baseline(data)
+    grid_p = np.arange(max(get_rigorous_xmax(mu_base, 'Poisson'), max_val) + 1)
+    psi_p = get_charlier_polynomials(grid_p, mu_base)
+    model_pc = RigorousLinearTiltModel(p_pmf, psi_p)
+    t_pc = StableOptimizer(model_pc, data, [2, 3]).optimize() # theta3, 4 최적화
+    model_pc.theta = t_pc
+    ll_p = np.sum(np.log(np.maximum(p_pmf(data), 1e-12)))
+    ll_pc = ll_p + model_pc.get_log_likelihood(data, t_pc[[2, 3]], [2, 3])
+
+    # 3. NB & NBM (theta2=0 Fixed)
     nb_params, nb_pmf = get_nb_baseline(data)
-    x_max_nb = max(get_rigorous_xmax(nb_params, 'NB'), max_val)
-    grid_nb = np.arange(x_max_nb + 1)
-    
+    grid_nb = np.arange(max(get_rigorous_xmax(nb_params, 'NB'), max_val) + 1)
     psi_nb = get_meixner_polynomials(grid_nb, *nb_params)
     model_nbm = RigorousLinearTiltModel(nb_pmf, psi_nb)
-    opt_nbm = RigorousOptimizer(model_nbm, data, [2, 3]) # theta3, theta4 최적화
-    t_nbm = opt_nbm.optimize()
-    
-    print(f"Simulation V5 - NBM Optimization Done.")
+    t_nbm = StableOptimizer(model_nbm, data, [2, 3]).optimize() # theta3, 4 최적화
+    model_nbm.theta = t_nbm
+    ll_nb = np.sum(np.log(np.maximum(nb_pmf(data), 1e-12)))
+    ll_nbm = ll_nb + model_nbm.get_log_likelihood(data, t_nbm[[2, 3]], [2, 3])
 
-    # --- [시각화 최적화 - 원우님 스타일 반영] ---
-    plt.figure(figsize=(8, 5)) 
+    # 4. 리포트 저장 (파일명: simulation_report.txt / theta 2,3,4 포함)
+    report_path = os.path.join(RESULT_DIR, "simulation_report.txt")
+    with open(report_path, "w", encoding='utf-8') as f:
+        header = f"{'Model':<15} | {'LL':<12} | {'AIC':<10} | {'theta2':<8} | {'theta3':<8} | {'theta4':<8}"
+        f.write("SNP Simulation Study Report (Ratio 2)\n" + "="*80 + "\n")
+        f.write(header + "\n" + "-"*80 + "\n")
+        
+        # Base Lines
+        f.write(f"{'Poisson':<15} | {ll_p:12.2f} | {-2*ll_p+2:10.2f} | {'-':<8} | {'-':<8} | {'-':<8}\n")
+        f.write(f"{'NB':<15} | {ll_nb:12.2f} | {-2*ll_nb+4:10.2f} | {'-':<8} | {'-':<8} | {'-':<8}\n")
+        
+        # SNP Lines (theta2=0은 고정이므로 0.0000으로 표시)
+        f.write(f"{'PC(SNP)':<15} | {ll_pc:12.2f} | {-2*ll_pc+8:10.2f} | {t_pc[1]:8.4f} | {t_pc[2]:8.4f} | {t_pc[3]:8.4f}\n")
+        f.write(f"{'NBM(SNP)':<15} | {ll_nbm:12.2f} | {-2*ll_nbm+10:10.2f} | {t_nbm[1]:8.4f} | {t_nbm[2]:8.4f} | {t_nbm[3]:8.4f}\n")
+        f.write("="*80 + "\n")
+
+    # 5. 시각화 (파일명: simulation_plot.png / 기존 로직 그대로)
+    plt.figure(figsize=(11, 7))
+    x_plot = np.arange(max_val + 1)
+    y_obs = np.bincount(data) / n_samples
+    plt.bar(x_plot, y_obs, alpha=0.6, color='#7f8c8d', label='Ratio 2 Data', edgecolor='none')
     
-    x_disp = np.arange(max_val + 1)
-    counts = np.bincount(data)
-    y_obs = counts / n_samples
+    plt.plot(x_plot, p_pmf(x_plot), 'g--', linewidth=0.8, label='Poisson Baseline', alpha=0.6)
+    plt.plot(x_plot, model_pc.pmf()[:max_val+1], 'g-o', linewidth=1.0, markersize=3, label='PC (SNP)')
     
-    # 진한 회색 바 (#7f8c8d), 논문용 명암비
-    plt.bar(x_disp, y_obs, alpha=0.6, color='#7f8c8d', label='Target (92% Dominant Peak)', edgecolor='none')
+    plt.plot(x_plot, nb_pmf(x_plot), 'r--', linewidth=0.8, label='NB Baseline', alpha=0.6)
+    plt.plot(x_plot, model_nbm.pmf()[:max_val+1], 'b-s', linewidth=1.0, markersize=3, label='NBM (SNP)')
     
-    # NB Baseline (빨간 점선) - 첫 번째 봉우리는 잘 맞지만, 뒤쪽 '혹'은 완전히 무시함
-    plt.plot(x_disp, nb_pmf(x_disp), 'r--', linewidth=1.5, label='NB Baseline', alpha=0.7)
+    plt.title("Simulation: Balanced Overdispersion (Variance $\\approx$ 2 * Mean)", fontsize=13, fontweight='bold')
+    plt.xlabel("Count"); plt.ylabel("Probability"); plt.legend(frameon=False)
+    plt.grid(axis='y', alpha=0.1); plt.tight_layout()
     
-    # NBM (파란 실선) - 첫 봉우리를 유지하면서, 뒤쪽의 미세한 '혹'을 향해 선이 반응함
-    pmf_nbm = model_nbm.pmf()
-    plt.plot(x_disp, pmf_nbm[:max_val+1], 'b-s', markersize=2, linewidth=1.0, label='NBM (Bending to Tail)')
-    
-    plt.title("Simulation: NBM Capturing Minor Second Peak", fontsize=12, fontweight='bold')
-    plt.xlabel("Count (x)"); plt.ylabel("Probability")
-    plt.legend(fontsize=9, loc='upper right'); plt.grid(alpha=0.15)
-    
-    plt.tight_layout()
-    plt.savefig(os.path.join(RESULT_DIR, "plot_simulation_v5_dominant.png"), dpi=300)
+    # 그래프 저장
+    plot_path = os.path.join(RESULT_DIR, "simulation_plot.png")
+    plt.savefig(plot_path, dpi=300)
     plt.show()
+    
+    print(f"✅ 최종 파일 생성 완료: {RESULT_DIR}")
 
 if __name__ == "__main__":
-    run_simulation_v5()
+    run_simulation()

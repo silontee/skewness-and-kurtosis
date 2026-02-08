@@ -16,19 +16,12 @@ def run_final_analysis():
     os.makedirs(RESULT_DIR, exist_ok=True)
     
     # --- [통합 분석 대상 데이터셋 정의] ---
-    # 신규 골든 데이터셋 + 기존 분석 데이터셋 전체 포함
+    # 요청하신 4가지 핵심 데이터셋으로 압축
     targets = [
-        # [그룹 1: 신규 골든 데이터셋 - 모델 차별화 강조]
-        ("insurance_data.csv", "children", "Insurance-Children"),         # PC/NBM 대조군 (Mild)
-        ("DoctorAUS.csv", "doctorco", "Doctor-Visits"),                    # NBM 우월성 (Mid)
-        ("Dataset multispecies Regional GAM.csv", "COUNT", "Species-Count"), # NBM 끝판왕 (Extreme)
-        
-        # [그룹 2: 기존 분석 데이터셋 - 범용성 증명]
-        ("LengthOfStay.csv", "lengthofstay", "Medical-LOS"),
-        ("olist_order_payments_dataset.csv", "payment_installments", "Olist-Installments"),
-        ("all_seasons.csv", "total_pts", "NBA-Total-Pts"),
-        ("all_seasons.csv", "total_ast", "NBA-Total-Ast"),
-        ("insurance.csv", "charges", "Insurance-Bimodal") # 의료비 이산화 버전
+        ("DoctorAUS.csv", "doctorco", "Doctor-Visits"),            # NBM 우월성 확인용
+        ("insurance.csv", "charges", "Insurance-Bimodal"),         # 의료비 이산화 버전
+        ("insurance_data.csv", "children", "Insurance-Children"),  # 과분산 대조군
+        ("LengthOfStay.csv", "lengthofstay", "Medical-LOS")        # 의료 재원 기간
     ]
     
     all_metrics = []
@@ -50,45 +43,34 @@ def run_final_analysis():
             except:
                 df = pd.read_csv(path, encoding='utf-8-sig')
 
-        # 💡 데이터 전처리 로직 (기존 로직 + 신규 데이터 대응)
-        if label.startswith("NBA"):
-            # NBA 데이터는 gp와 pts/ast를 곱해 정수화
-            if "total_pts" in col_name:
-                data = np.round(df['gp'] * df['pts']).astype(int)
-            else:
-                data = np.round(df['gp'] * df['ast']).astype(int)
-        elif label == "Insurance-Bimodal":
-            # 의료비는 1,000달러 단위로 이산화
+        # --- [데이터 전처리 로직] ---
+        if label == "Insurance-Bimodal":
+            # 의료비는 1,000달러 단위로 이산화하여 카운트 데이터로 변환
             data = np.round(df['charges'] / 1000).astype(int)
-        elif label == "Species-Count":
-            # Species 데이터 컬럼명 특이사항 대응
-            if col_name not in df.columns:
-                target_col = [c for c in df.columns if 'COUNT' in c.upper()][0]
-                data = pd.to_numeric(df[target_col], errors='coerce').dropna().values.astype(int)
-            else:
-                data = pd.to_numeric(df[col_name], errors='coerce').dropna().values.astype(int)
         else:
-            # 일반적인 카운트 데이터
+            # 일반적인 카운트 데이터 처리
             data = pd.to_numeric(df[col_name], errors='coerce').dropna().values.astype(int)
         
         data = data[data >= 0]
-        if len(data) == 0: continue
+        if len(data) == 0: 
+            print(f"⚠️ {label}: 유효한 데이터가 없습니다.")
+            continue
 
         n_samples = len(data)
         max_val = np.max(data)
         
-        # 1. Poisson / PC (k=3, 4)
+        # 1. Poisson / PC (k=3, 4) 분석
         mu, p_pmf = get_poisson_baseline(data)
         ll_p_base = np.sum(np.log(np.maximum(p_pmf(data), 1e-12)))
         x_max_p = max(get_rigorous_xmax(mu, 'Poisson'), max_val)
         grid_p = np.arange(x_max_p + 1)
         psi_p = get_charlier_polynomials(grid_p, mu)
         model_pc = RigorousLinearTiltModel(p_pmf, psi_p)
-        opt_pc = RigorousOptimizer(model_pc, data, [2, 3]) # theta3, theta4
+        opt_pc = RigorousOptimizer(model_pc, data, [2, 3]) # theta3, theta4 최적화
         t_pc = opt_pc.optimize()
         ll_pc_total = ll_p_base + model_pc.get_log_likelihood(data, t_pc[[2,3]], [2,3])
         
-        # 2. NB / NBM (k=3, 4)
+        # 2. NB / NBM (k=3, 4) 분석
         nb_params, nb_pmf = get_nb_baseline(data)
         has_nb = nb_params is not None
         ll_nb_base, ll_nbm_total = None, None
@@ -160,7 +142,7 @@ def run_final_analysis():
                 f.write(f"{'':<20} | {'NBM':<12} | {m['NBM_LL']:13.2f} | {aic_nbm:13.2f} | {bic_nbm:13.2f} | {m['NBM_T3']:9.4f} | {m['NBM_T4']:9.4f}\n")
             f.write("-" * 145 + "\n")
         f.write(divider)
-    print(f"✅ 통합 분석 완료! {RESULT_DIR} 폴더를 확인하세요.")
+    print(f"✅ 분석 완료! {RESULT_DIR} 폴더를 확인하세요.")
 
 if __name__ == "__main__":
     run_final_analysis()
