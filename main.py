@@ -2,134 +2,109 @@
 import os
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 import scipy.stats as stats
-
 from src.data_prep import load_fifa_counts, insurance_bimodal_to_count
 from src.baselines import poisson_baseline, nb_pmf_mom_or_poisson, xmax_from_data
-from src.expansions_mom import fit_pc_pmf, fit_meixner_pmf, normalize_pmf #
+from src.expansions_mom import fit_pc_pmf, fit_meixner_pmf, normalize_pmf
 from src.metrics import empirical_pmf, l1_sum_abs
-from src.orthopoly import get_charlier_psi
+from src.analysis import run_convergence_study, plot_comparison, plot_pc_convergence
 
-DATA_DIR, RESULT_DIR = "data", "result"
-os.makedirs(RESULT_DIR, exist_ok=True) 
+RESULT_DIR = "result"
+os.makedirs(RESULT_DIR, exist_ok=True)
 
-# --- PC 차수별 수렴 분석 (0, 4, 6, 8차 위주) ---
-def evaluate_pc_order_series(data, grid, emp, mu, orders=[0, 4, 6, 8]):
-    base_pois = stats.poisson.pmf(grid, mu)
-    psi_full = get_charlier_psi(grid, mu, K=max(orders))
-    theta_all = np.mean(psi_full[data], axis=0)
+# --- [시뮬레이션 데이터 생성기] ---
+def get_simul_heavy():
+    np.random.seed(129)
+    return np.concatenate([stats.nbinom.rvs(15, 15/(15+20), size=1600), stats.nbinom.rvs(10, 10/(10+80), size=2400)])
+
+def get_simul_success():
+    np.random.seed(42)
+    return np.concatenate([np.random.poisson(3, 5000), np.random.poisson(8, 5000)])
+
+def write_report_section(f, title, data_stats, table_data):
+    """지정된 형식으로 리포트 섹션 작성"""
+    f.write("="*125 + "\n")
+    f.write(f"{title:^125}\n")
+    f.write("="*125 + "\n\n")
+    f.write(f"▶ Dataset Stats: n={data_stats['n']}, Mean={data_stats['mu']:.4f}, V/M={data_stats['vm']:.4f}\n\n")
     
-    order_rows = []
-    order_pmfs = {}
-    for K in orders:
-        tilt = 1.0 + (psi_full[:, 1:K+1] @ theta_all[1:K+1])
-        p_k = normalize_pmf(base_pois * tilt) # pmf_to_safe -> normalize_pmf로 교체
-        l1 = l1_sum_abs(emp, p_k)
-        order_rows.append({"model": f"PC-Order {K}", "L1_diff": l1, "params": {"mu": mu, "theta": theta_all[:K+1]}})
-        order_pmfs[K] = p_k
-    return pd.DataFrame(order_rows), order_pmfs
-
-# --- 시각화 1: 표준 모델 비교 ---
-def plot_standard(name, grid, emp, model_dict, save_path):
-    plt.figure(figsize=(11, 7))
-    plt.bar(grid, emp, width=1.0, alpha=0.3, label="Empirical", color="#2c3e50", edgecolor="black", linewidth=0.7)
+    f.write("  [ 1. L1 Discrepancy ]\n")
+    f.write("  " + "-"*50 + "\n")
+    for _, row in table_data.iterrows():
+        f.write(f"  {row['model']:<25} | {row['L1_diff']:>18.6f}\n")
+    f.write("  " + "-"*50 + "\n\n")
     
-    styles = {
-        "Poisson": {"color": "#95a5a6", "ls": "--", "lw": 1.5, "offset": -0.2},
-        "NB":      {"color": "#e67e22", "ls": "--", "lw": 1.5, "offset": -0.07},
-        "PC":      {"color": "#2980b9", "ls": "-",  "lw": 2.2, "offset": 0.07},
-        "NBM":     {"color": "#c0392b", "ls": "-",  "lw": 2.2, "offset": 0.2}
-    }
-    for label, st in styles.items():
-        if label in model_dict:
-            plt.plot(grid + st["offset"], model_dict[label], label=label, 
-                     color=st["color"], ls=st["ls"], lw=st["lw"], marker='o', ms=4)
-            
-    plt.title(f"Standard Model Comparison: {name}", fontsize=15, fontweight='bold')
-    plt.legend(); plt.grid(axis='y', alpha=0.3, linestyle=':'); plt.tight_layout(); plt.savefig(save_path, dpi=300); plt.close()
-
-# --- 시각화 2: PC 수렴 분석 ---
-def plot_pc_convergence(name, grid, emp, order_pmfs, save_path):
-    plt.figure(figsize=(11, 7))
-    plt.bar(grid, emp, width=1.0, alpha=0.15, color='gray', edgecolor="#333333", label='Empirical Data')
-    colors = plt.cm.viridis(np.linspace(0.2, 0.9, len(order_pmfs)))
-    for i, (K, pmf) in enumerate(order_pmfs.items()):
-        plt.plot(grid, pmf, label="Poisson (Base)" if K == 0 else f"PC Order {K}", 
-                 color=colors[i], ls='-' if K == 8 else '--', lw=2.5 if K==8 else 1.8)
-    plt.title(f"PC Expansion Convergence: {name}", fontsize=15, fontweight='bold')
-    plt.legend(); plt.grid(axis='y', alpha=0.2); plt.tight_layout(); plt.savefig(save_path, dpi=300); plt.close()
-
-# --- 리포트 작성 ---
-def write_final_report(path, tables, summaries):
-    with open(path, "w", encoding="utf-8") as f:
-        f.write("="*125 + "\n")
-        f.write(f"{'SNP COMPREHENSIVE ANALYSIS: SHAPE RECOVERY & ACCURACY':^125}\n")
-        f.write("="*125 + "\n\n")
-        for (title, table), summary in zip(tables, summaries):
-            f.write(f"▶ {title}\n")
-            f.write(f"  Stats: n={summary['n']}, Mean={summary['mu']:.4f}\n\n")
-            f.write("  [ 1. L1 Discrepancy Table ]\n")
-            f.write("  " + "-"*50 + "\n")
-            for _, r in table.iterrows():
-                f.write(f"  {r['model']:<25} | {r['L1_diff']:>18.6f}\n")
-            f.write("  " + "-"*50 + "\n\n")
-            f.write("  [ 2. Parameter Details (Theta Expansion) ]\n")
-            max_t = max([len(r['params'].get('theta', [])) for _, r in table.iterrows()]) - 1
-            header = f"  {'Model':<20} | {'mu':>7} |"
-            for i in range(1, max_t + 1): header += f" {'t'+str(i):>8} |"
-            f.write(header + "\n" + "  " + "-" * len(header) + "\n")
-            for _, r in table.iterrows():
-                p = r['params']
-                line = f"  {r['model']:<20} | {float(p.get('mu',0)):>7.3f} |"
-                t_list = p.get('theta', [])
-                for i in range(1, max_t + 1):
-                    val = t_list[i] if i < len(t_list) else 0.0
-                    line += f" {val:>8.4f} |"
-                f.write(line + "\n")
-            f.write("\n" + "."*125 + "\n\n")
+    f.write("  [ 2. Parameter Details ]\n")
+    header = f"  {'Model':<15} | {'mu':>8} | {'t1':>8} | {'t2':>8} | {'t3':>8} | {'t4':>8} | {'t5':>8} | {'t6':>8} | {'t7':>8} | {'t8':>8} |"
+    f.write(header + "\n")
+    f.write("  " + "-" * (len(header) - 2) + "\n")
+    
+    for _, row in table_data.iterrows():
+        p = row['params']
+        mu_val = p.get('mu', data_stats['mu'])
+        t_list = p.get('theta', [0.0])
+        t_display = [0.0] * 8
+        for i, val in enumerate(t_list[1:]):
+            if i < 8: t_display[i] = val
+        line = f"  {row['model']:<15} | {mu_val:>8.3f} |"
+        for t_val in t_display:
+            line += f" {t_val:>8.4f} |"
+        f.write(line + "\n")
+    f.write("\n\n")
 
 def main():
-    fifa_csv, ins_csv = "data/results.csv", "data/insurance.csv"
-    fifa = load_fifa_counts(fifa_csv)
-    ins, _ = insurance_bimodal_to_count(ins_csv, bin_width=3000, cap_p=95)
-    tables, summaries = [], []
+    # 데이터 로드 및 생성
+    fifa = load_fifa_counts("data/results.csv")
+    ins, _ = insurance_bimodal_to_count("data/insurance.csv", bin_width=3000)
+    simul_heavy = get_simul_heavy()
+    simul_success = get_simul_success()
 
-    # 1. FIFA Standard
-    grid_f = np.arange(xmax_from_data(fifa, q=0.999) + 1)
-    emp_f = empirical_pmf(fifa, len(grid_f)-1)
-    mu_f, _ = poisson_baseline(fifa)
-    
+    # 분석 그룹 분리 (원우의 요청: 순서 조정)
+    standard_tasks = [("FIFA", fifa), ("Insurance", ins), ("Simul_Heavy", simul_heavy)]
+    convergence_tasks = [("Insurance", ins), ("Simul_Success", simul_success)]
 
-    m_f = {"NBM": normalize_pmf(fit_meixner_pmf(fifa, grid_f)[0]), 
-           "NB": normalize_pmf(nb_pmf_mom_or_poisson(fifa, grid_f)[0]),
-           "PC": normalize_pmf(fit_pc_pmf(fifa, grid_f)[0]), 
-           "Poisson": normalize_pmf(stats.poisson.pmf(grid_f, mu_f))}
-    
-    t_f = pd.DataFrame([{"model": k, "L1_diff": l1_sum_abs(emp_f, v), "params": {"mu": mu_f, "theta": [0]*5}} for k, v in m_f.items()])
-    tables.append(("FIFA Standard Analysis", t_f)); summaries.append({"n": len(fifa), "mu": mu_f})
-    plot_standard("FIFA", grid_f, emp_f, m_f, "result/plot_fifa_standard.png")
+    with open(f"{RESULT_DIR}/unified_report.txt", "w", encoding="utf-8") as f:
+        # 1부: STANDARD COMPARISON (FIFA -> Insurance -> Simul_Heavy)
+        for name, data in standard_tasks:
+            print(f"📊 [Standard] 분석 중: {name}...")
+            mu, vm = np.mean(data), np.var(data)/np.mean(data)
+            stats_dict = {'n': len(data), 'mu': mu, 'vm': vm}
+            grid = np.arange(int(np.percentile(data, 99.7)) + 1)
+            emp = (empirical_pmf(data, grid[-1])[:len(grid)])
+            emp /= emp.sum()
 
-    # 2. Insurance Standard
-    grid_i = np.arange(xmax_from_data(ins, q=0.999) + 1)
-    emp_i = empirical_pmf(ins, len(grid_i)-1)
-    mu_i, _ = poisson_baseline(ins)
-    
-    m_i = {"NBM": normalize_pmf(fit_meixner_pmf(ins, grid_i)[0]), 
-           "NB": normalize_pmf(nb_pmf_mom_or_poisson(ins, grid_i)[0]),
-           "PC": normalize_pmf(fit_pc_pmf(ins, grid_i)[0]), 
-           "Poisson": normalize_pmf(stats.poisson.pmf(grid_i, mu_i))}
-    
-    t_i = pd.DataFrame([{"model": k, "L1_diff": l1_sum_abs(emp_i, v), "params": {"mu": mu_i, "theta": [0]*5}} for k, v in m_i.items()])
-    tables.append(("Insurance Standard Analysis", t_i)); summaries.append({"n": len(ins), "mu": mu_i})
-    plot_standard("Insurance", grid_i, emp_i, m_i, "result/plot_ins_standard.png")
+            p_nbm, i_nbm = fit_meixner_pmf(data, grid)
+            p_pc, i_pc = fit_pc_pmf(data, grid)
+            p_nb, i_nb = nb_pmf_mom_or_poisson(data, grid)
+            p_pois = stats.poisson.pmf(grid, mu)
 
-    # 3. Insurance PC Orders
-    t_pc_ord, p_pc_ord = evaluate_pc_order_series(ins, grid_i, emp_i, mu_i, orders=[0, 4, 6, 8])
-    tables.append(("Insurance PC Order Convergence Study", t_pc_ord)); summaries.append({"n": len(ins), "mu": mu_i})
-    plot_pc_convergence("Insurance", grid_i, emp_i, p_pc_ord, "result/plot_ins_pc_convergence.png")
+            m_dict = {"NBM": normalize_pmf(p_nbm), "NB": normalize_pmf(p_nb), "PC": normalize_pmf(p_pc), "Poisson": normalize_pmf(p_pois)}
+            plot_comparison(name, grid, emp, m_dict, f"{RESULT_DIR}/plot_{name}_std.png")
+            
+            std_rows = [
+                {"model": "NBM", "L1_diff": l1_sum_abs(emp, m_dict["NBM"]), "params": i_nbm},
+                {"model": "NB", "L1_diff": l1_sum_abs(emp, m_dict["NB"]), "params": i_nb},
+                {"model": "PC", "L1_diff": l1_sum_abs(emp, m_dict["PC"]), "params": i_pc},
+                {"model": "Poisson", "L1_diff": l1_sum_abs(emp, m_dict["Poisson"]), "params": {"mu": mu, "theta": [0]}}
+            ]
+            write_report_section(f, f"{name}: STANDARD MODEL COMPARISON", stats_dict, pd.DataFrame(std_rows))
 
-    write_final_report("result/report.txt", tables, summaries)
-    print("✅ 실제 데이터 분석 완료! 결과가 result/ 폴더에 저장되었습니다.")
+        # 2부: CONVERGENCE STUDY (Insurance -> Simul_Success)
+        for name, data in convergence_tasks:
+            print(f"📈 [Convergence] 분석 중: {name}...")
+            mu, vm = np.mean(data), np.var(data)/np.mean(data)
+            stats_dict = {'n': len(data), 'mu': mu, 'vm': vm}
+            grid = np.arange(int(np.percentile(data, 99.7)) + 1)
+            emp = (empirical_pmf(data, grid[-1])[:len(grid)])
+            emp /= emp.sum()
 
-if __name__ == "__main__": main()
+            df_conv, p_conv = run_convergence_study(data, grid, emp, mu, orders=[0, 2, 4, 6, 8])
+            plot_pc_convergence(name, grid, emp, p_conv, df_conv, f"{RESULT_DIR}/plot_{name}_convergence.png")
+            
+            conv_rows = [{"model": r['model'], "L1_diff": r['L1_diff'], "params": {"mu": mu, "theta": r['theta']}} for _, r in df_conv.iterrows()]
+            write_report_section(f, f"{name}: PC EXPANSION CONVERGENCE REPORT", stats_dict, pd.DataFrame(conv_rows))
+
+    print(f"✅ 리포트 순서 조정 완료! (Standard 3개 -> Convergence 2개)")
+
+if __name__ == "__main__":
+    main()
