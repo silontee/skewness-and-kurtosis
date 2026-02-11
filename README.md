@@ -1,4 +1,4 @@
-Markdown# 📊 Skewness and Kurtosis: SNP Expansion Framework
+# 📊 Skewness and Kurtosis: SNP Expansion Framework
 
 본 프로젝트는 **Semi-Nonparametric (SNP)** 확장을 활용하여 복잡한 이산형 확률 분포(Discrete Count Data)의 형태를 정교하게 복원하는 통계 분석 프레임워크입니다. 특히 데이터의 **과분산(Over-dispersion)**과 **이봉성(Bimodality)**이 강한 환경에서 기존 모수적 모델의 한계를 극복하는 데 특화되어 있습니다.
 
@@ -27,14 +27,39 @@ Markdown# 📊 Skewness and Kurtosis: SNP Expansion Framework
 ├── data/                # 분석용 원천 데이터셋 (.csv)
 ├── result/              # 생성된 시각화 자료 및 통합 리포트
 └── main.py              # 데이터 생성 및 전체 프로세스 통합 실행 스크립트
-📈 Analysis ScenariosDatasetTypeCharacteristicsKey FocusFIFARealHeavy Right Tail, $V/M > 1$꼬리 부분의 고차 적률 복원InsuranceRealBimodal (Smoker vs Non-smoker)이봉성 데이터의 형태 복원Simul_HeavySynthExtreme Over-dispersion ($V/M > 20$)극한 환경에서의 모델 안정성(Stress Test)Simul_SuccessSynthClean Bimodal Mixture차수 증가에 따른 이론적 수렴성 증명🚀 Quick Start본 프로젝트는 uv 패키지 매니저를 통한 실행을 권장합니다.Bash# 전체 통합 분석 실행 (실제 데이터 2종 + 시뮬레이션 2종)
-uv run main.py
-실행 결과는 result/ 폴더에 다음과 같이 생성됩니다:5개의 분석 그래프: 표준 비교(3개) 및 수렴성 증명(2개)통합 분석 리포트: unified_report.txt📊 Result HighlightsStandard Comparison: NBM(Meixner-based) 모델이 과분산이 심한 실제 데이터와 시뮬레이션에서 PC 모델보다 우수한 안정성과 낮은 $L_1$ 오차를 보임을 입증합니다.Convergence Proof: 'Simul_Success' 시나리오를 통해 다항식 확장 차수($K$)가 증가함에 따라 실제 분포에 지수적으로 수렴하는 과정을 시각화합니다.
+```
 ---
 
-### 💡 붙여넣은 후 확인 방법
-1.  VS Code에서 `README.md` 파일을 저장한다.
-2.  **`Ctrl + Shift + V`**를 누른다.
-3.  화면 오른쪽에 표와 글씨들이 깔끔하게 정리되어 나오는지 확인한다.
+## 📈 Analysis Scenarios
 
-이제 표 복사 걱정 없이 한 번에 해결될 거야! 혹시 파일 내용 중에 **데이터셋 이름을 바꾸거나 
+| Dataset | Type | Characteristics | Key Focus |
+| :--- | :--- | :--- | :--- |
+| **FIFA** | Real | Heavy Right Tail, $V/M > 1$ | 꼬리 부분의 고차 적률 복원 |
+| **Insurance** | Real | Bimodal (Smoker vs Non-smoker) | 이봉성 데이터의 형태 복원 |
+| **Simul_Heavy** | Synth | Extreme Over-dispersion ($V/M > 20$) | 극한 환경에서의 모델 안정성(Stress Test) |
+| **Simul_Success**| Synth | Clean Bimodal Mixture | 차수 증가에 따른 이론적 수렴성 증명 |
+
+---
+
+## 🚀 Quick Start
+
+본 프로젝트는 `uv` 패키지 매니저를 통한 실행을 권장합니다.
+
+```bash
+# 전체 통합 분석 실행 (실제 데이터 2종 + 시뮬레이션 2종)
+uv run main.py
+```
+실행 결과는 result/ 폴더에 다음과 같이 생성됩니다:
+
+* 5개의 분석 그래프: 표준 비교(3개) 및 수렴성 증명(2개)
+
+* 통합 분석 리포트: unified_report.txt
+
+---
+
+## 📊 Result Highlights
+
+* **Standard Comparison**: NBM(Meixner-based) 모델이 과분산이 심한 실제 데이터와 시뮬레이션에서 PC 모델보다 우수한 안정성과 낮은 $L_1$ 오차를 보임을 입증합니다.
+
+
+* **Convergence Proof**: 'Simul_Success' 시나리오를 통해 다항식 확장 차수($K$)가 증가함에 따라 실제 분포에 지수적으로 수렴하는 과정을 시각화합니다.
