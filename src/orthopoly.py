@@ -14,18 +14,11 @@ def _rising(a, k):
     for i in range(k):
         out *= (a + i)
     return out
-#하강계승
-def _falling(a, k):
-    """(a)_k falling factorial for integer-like a (used with -x)"""
-    out = 1.0
-    for i in range(k):
-        out *= (a - i)
-    return out
 
 # -----------------------
 # Charlier polynomials
 # C_n(x; mu) with orthonormalization:
-# psi_n = C_n / sqrt(n! * mu^n)
+# h_n = n! / mu^n,  psi_n = C_n / sqrt(h_n) = C_n * sqrt(mu^n / n!)
 # 재귀식 계산과 직교 정규화해주기
 # -----------------------
 

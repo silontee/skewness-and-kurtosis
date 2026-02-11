@@ -12,9 +12,10 @@ def run_convergence_study(data, grid, emp, mu, orders=[0, 4, 6, 8]):
     base_pois = stats.poisson.pmf(grid, mu)
     psi_grid = get_charlier_psi(grid, mu, K=max(orders))
     
-    # 데이터 전체 범위에서 계수 추출
+    # 데이터 전체 범위에서 계수 추출 (Eq 17: θ*_n = E_p[ψ_n(X)])
     psi_at_data = get_charlier_psi(np.arange(np.max(data) + 1), mu, K=max(orders))
     theta_all = np.mean(psi_at_data[data], axis=0)
+    theta_all[1] = 0.0  # Proposition 2: 평균 매칭(μ=E[X]) 시 θ₁=0
     
     order_rows, order_pmfs = [], {}
     for K in orders:

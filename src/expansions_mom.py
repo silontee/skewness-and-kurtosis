@@ -1,5 +1,4 @@
 import numpy as np
-from scipy.special import gammaln
 from src.baselines import poisson_baseline, nb_moment_matched_params, nb_baseline_from_params
 from src.orthopoly import get_charlier_psi, get_meixner_psi
 
@@ -14,7 +13,7 @@ def normalize_pmf(p):
 # ---- PC theta  적률법에 맞게 생성 theta1 = 0
 def pc_theta_mom(data, K=4):
     mu, _ = poisson_baseline(data)
-    # 논문의 정의: theta_n = E[psi_n(X)] (Eq 22)
+    # 논문 Eq (17): theta*_n = E_p[psi_n(X)] 의 표본 추정
     # 데이터를 직접 다항식에 넣어서 평균을 구하는 것이 가장 정확하다.
     psi_at_data = get_charlier_psi(data, mu, K=K)
     theta = np.mean(psi_at_data, axis=0)
@@ -40,7 +39,7 @@ def build_tilt_pmf(grid, w_vals, psi, theta):
     return normalize_pmf(raw)
 
 
-# Charlier,Maxiner tilt 최적화
+# Charlier, Meixner tilt 최적화
 # 소분산 방지와 파라미터 딕셔너리화
 def fit_pc_pmf(data, grid, K=4):
     mu, w = poisson_baseline(data)
