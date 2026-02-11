@@ -59,7 +59,7 @@ def main():
     simul_heavy = get_simul_heavy()
     simul_success = get_simul_success()
 
-    # 분석 그룹 분리 (원우의 요청: 순서 조정)
+    # 분석 그룹 분리 
     standard_tasks = [("FIFA", fifa), ("Insurance", ins), ("Simul_Heavy", simul_heavy)]
     convergence_tasks = [("Insurance", ins), ("Simul_Success", simul_success)]
 

@@ -15,7 +15,7 @@ def normalize_pmf(p):
 def pc_theta_mom(data, K=4):
     mu, _ = poisson_baseline(data)
     # 논문의 정의: theta_n = E[psi_n(X)] (Eq 22)
-    # 데이터를 직접 다항식에 넣어서 평균을 구하는 것이 가장 정확합니다.
+    # 데이터를 직접 다항식에 넣어서 평균을 구하는 것이 가장 정확하다.
     psi_at_data = get_charlier_psi(data, mu, K=K)
     theta = np.mean(psi_at_data, axis=0)
     theta[1] = 0.0 
