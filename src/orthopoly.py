@@ -30,20 +30,20 @@ def _falling(a, k):
 # -----------------------
 
 def get_charlier_psi(grid, mu, K=4):
-    """논문 Eq (11), (12) 재현"""
+    """논문 Eq (23) Charlier 다항식 + p.7 직교관계 h_n=n!/μ^n 기반 정규직교화"""
     mu = float(mu)
     x = np.asarray(grid)
     C = np.zeros((len(x), K + 1))
     C[:, 0] = 1.0
-    if K >= 1: C[:, 1] = 1.0 - (x / mu)  # 논문과 동일하게 Scaled
-    
+    if K >= 1: C[:, 1] = 1.0 - (x / mu)
+
     for n in range(1, K):
-        # 논문 Eq (11) 재귀식: C_{n+1} = (mu + n - x)Cn - n*Cn-1 / mu
+        # Charlier 3항 재귀식 (p.7 생성함수에서 유도): μC_{n+1} = (μ+n-x)C_n - nC_{n-1}
         C[:, n+1] = ((mu + n - x) * C[:, n] - n * C[:, n-1]) / mu
-        
+
     psi = np.zeros_like(C)
     for n in range(K + 1):
-        # 논문 Eq (12): h_n = n! / mu^n
+        # p.7 직교관계: h_n = n!/μ^n, φ_n = √(μ^n/n!) C_n
         h_n = math.factorial(n) / (mu**n)
         psi[:, n] = C[:, n] / np.sqrt(h_n)
     return psi
@@ -61,22 +61,21 @@ def get_charlier_psi(grid, mu, K=4):
 # -----------------------
 
 def get_meixner_psi(grid, beta, c, K=4):
-    """논문 Eq (14), (15) 재현"""
+    """논문 Eq (28) Meixner 다항식 + p.8 직교관계 h_n=n!c^{-n}/(β)_n 기반 정규직교화"""
     x = np.asarray(grid)
     M = np.zeros((len(x), K + 1))
     M[:, 0] = 1.0
     if K >= 1: M[:, 1] = 1.0 - (x * (1 - c) / (beta * c))
-    
+
     for n in range(1, K):
-        # 논문 Eq (14) 재귀식 사용 (Summation보다 훨씬 안정적)
+        # Meixner 3항 재귀식 (DLMF 표준): c(β+n)M_{n+1} = [(1+c)n+cβ-(1-c)x]M_n - nM_{n-1}
         term1 = (n + (n + beta) * c - x * (1 - c)) * M[:, n]
         term2 = n * M[:, n-1]
-        M[:, n+1] = (term1 - term2) / (beta + n)
-        
+        M[:, n+1] = (term1 - term2) / ((beta + n) * c)
+
     psi = np.zeros_like(M)
     for n in range(K + 1):
-        # 논문 Eq (15) 하단 h_n 정의
-        # h_n = n! * c^-n / (beta)_n
+        # p.8 직교관계: h_n = n! c^{-n} / (β)_n, φ_n = M_n/√h_n
         h_n = (math.factorial(n) * (c**-n)) / _rising(beta, n)
         psi[:, n] = M[:, n] / np.sqrt(h_n)
     return psi
