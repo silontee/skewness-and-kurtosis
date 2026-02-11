@@ -1,29 +1,27 @@
-# src/expansions_mom.py
 import numpy as np
 from scipy.special import gammaln
-from src.moments import factorial_moments, central_moments
 from src.baselines import poisson_baseline, nb_moment_matched_params, nb_baseline_from_params
 from src.orthopoly import get_charlier_psi, get_meixner_psi
 
 EPS = 1e-15
-
+# 음수 확률값을 0으로 강제 고정
 def normalize_pmf(p):
     p = np.asarray(p, dtype=float)
     p[p < 0] = 0.0
     s = p.sum()
     return p / s if s > 0 else np.ones_like(p) / len(p)
 
-# ---- PC theta (mean-matching => theta1=0)
+# ---- PC theta  적률법에 맞게 생성 theta1 = 0
 def pc_theta_mom(data, K=4):
     mu, _ = poisson_baseline(data)
     # 논문의 정의: theta_n = E[psi_n(X)] (Eq 22)
     # 데이터를 직접 다항식에 넣어서 평균을 구하는 것이 가장 정확합니다.
     psi_at_data = get_charlier_psi(data, mu, K=K)
     theta = np.mean(psi_at_data, axis=0)
-    theta[1] = 0.0 # Mean-matching 제약
+    theta[1] = 0.0 
     return mu, theta
 
-# ---- Meixner theta (mean&var matching => theta1=theta2=0)
+# ---- Meixner theta theta1,2 = 0
 def meixner_theta_mom(data, K=4):
     params = nb_moment_matched_params(data)
     if params is None: return None, None
@@ -31,16 +29,19 @@ def meixner_theta_mom(data, K=4):
     
     psi_at_data = get_meixner_psi(data, beta, c, K=K)
     theta = np.mean(psi_at_data, axis=0)
-    theta[1] = 0.0 # Mean-matching
-    theta[2] = 0.0 # Var-matching
+    theta[1] = 0.0 
+    theta[2] = 0.0 
     return (beta, c), theta
 
+#--tilting 최종 공식
 def build_tilt_pmf(grid, w_vals, psi, theta):
-    # p(x) = w(x) * (1 + sum_{n>=1} theta_n * psi_n(x))
     z = 1.0 + psi[:, 1:] @ theta[1:]
     raw = w_vals * z
     return normalize_pmf(raw)
 
+
+# Charlier,Maxiner tilt 최적화
+# 소분산 방지와 파라미터 딕셔너리화
 def fit_pc_pmf(data, grid, K=4):
     mu, w = poisson_baseline(data)
     w_vals = w(grid)

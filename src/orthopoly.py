@@ -1,16 +1,20 @@
-# src/orthopoly.py
+# 직교다항식 생성
 import numpy as np
 import math
 
-EPS = 1e-15
+#---------------------
+#수학적 보조 도구
+#---------------------
 
+EPS = 1e-15
+#상승계승
 def _rising(a, k):
     """(a)_k rising factorial"""
     out = 1.0
     for i in range(k):
         out *= (a + i)
     return out
-
+#하강계승
 def _falling(a, k):
     """(a)_k falling factorial for integer-like a (used with -x)"""
     out = 1.0
@@ -22,32 +26,11 @@ def _falling(a, k):
 # Charlier polynomials
 # C_n(x; mu) with orthonormalization:
 # psi_n = C_n / sqrt(n! * mu^n)
+# 재귀식 계산과 직교 정규화해주기
 # -----------------------
-def charlier_Cn(grid, mu, n):
-    """
-    Compute Charlier polynomial C_n(x; mu) for all x in grid.
-    Use stable recurrence:
-      C_0 = 1
-      C_1 = x - mu
-      C_{n+1} = (x - n - mu) C_n - mu * n * C_{n-1}
-    """
-    x = np.asarray(grid, dtype=float)
-    mu = float(mu)
-
-    if n == 0:
-        return np.ones_like(x)
-    if n == 1:
-        return x - mu
-
-    Cnm1 = np.ones_like(x)      # C_0
-    Cn = x - mu                 # C_1
-    for k in range(1, n):
-        Cnp1 = (x - k - mu) * Cn - (mu * k) * Cnm1
-        Cnm1, Cn = Cn, Cnp1
-    return Cn
 
 def get_charlier_psi(grid, mu, K=4):
-    """논문 Eq (11), (12) 완벽 재현"""
+    """논문 Eq (11), (12) 재현"""
     mu = float(mu)
     x = np.asarray(grid)
     C = np.zeros((len(x), K + 1))
@@ -76,29 +59,9 @@ def get_charlier_psi(grid, mu, K=4):
 # h_n = n! * c^{-n} / (beta)_n
 # psi_n = M_n / sqrt(h_n)
 # -----------------------
-def meixner_Mn(grid, beta, c, n):
-    x = np.asarray(grid, dtype=float)
-    beta = float(beta)
-    c = float(c)
-
-    z = 1.0 - 1.0 / max(c, EPS)
-
-    # finite sum
-    out = np.zeros_like(x, dtype=float)
-    for k in range(0, n + 1):
-        # (-n)_k = (-1)^k * n!/(n-k)!  (falling factorial n*(n-1)*... )
-        negn_poch = ((-1.0) ** k) * (math.factorial(n) / math.factorial(n - k))
-        # (-x)_k = (-1)^k * (x)_k_falling  but x is vector (not integer always),
-        # for our case x are integers grid, so we compute product (x)(x-1)...(x-k+1)
-        negx_poch = ((-1.0) ** k) * _falling(x, k)
-
-        beta_poch = _rising(beta, k)
-        term = (negn_poch * negx_poch) / (max(beta_poch, EPS) * math.factorial(k))
-        out += term * (z ** k)
-    return out
 
 def get_meixner_psi(grid, beta, c, K=4):
-    """논문 Eq (14), (15) 완벽 재현"""
+    """논문 Eq (14), (15) 재현"""
     x = np.asarray(grid)
     M = np.zeros((len(x), K + 1))
     M[:, 0] = 1.0

@@ -1,13 +1,13 @@
-# src/baselines.py
 import numpy as np
 from scipy.stats import poisson, nbinom
 
 EPS = 1e-15
-
+#포아송 데이터 평균 추출
 def poisson_baseline(data):
     mu = float(np.mean(data))
     return mu, lambda x: poisson.pmf(x, mu)
 
+#음이항 분포 파라미터 설정
 def nb_moment_matched_params(data):
     mu = float(np.mean(data))
     var = float(np.var(data, ddof=0))
@@ -17,22 +17,12 @@ def nb_moment_matched_params(data):
     beta = (mu**2) / (var - mu)
     return beta, c
 
-# ✅ (추가) expansions_mom.py가 import하는 함수
+# scipy함수가 논문과 파라미터가 맞지 않아서 사용
 def nb_baseline_from_params(beta, c):
     # scipy: n=beta, p=1-c
     return lambda x: nbinom.pmf(x, beta, 1.0 - c)
 
-# ✅ (추가) expansions_mom.py가 import하는 함수(호환용)
-def nb_baseline_or_poisson(data):
-    params = nb_moment_matched_params(data)
-    if params is None:
-        mu, wP = poisson_baseline(data)
-        return ("NB(baseline MoM; Poisson approx)", {"note": "var<=mean -> Poisson approx", "mu": mu}, wP)
-    beta, c = params
-    wNB = nb_baseline_from_params(beta, c)
-    return ("NB(baseline MoM)", {"beta": beta, "c": c}, wNB)
-
-# ✅ main.py에서 쓰는 NB pmf 직접 생성 함수
+# pmf 생성 
 def nb_pmf_mom_or_poisson(data, grid):
     mu = float(np.mean(data))
     params = nb_moment_matched_params(data)
@@ -45,6 +35,8 @@ def nb_pmf_mom_or_poisson(data, grid):
     p = p / max(p.sum(), EPS)
     return p, {"beta": beta, "c": c}
 
+
+# 데이터 0.999까지 반영
 def xmax_from_data(data, q=0.999):
     data = np.asarray(data, dtype=int)
     return int(np.maximum(np.max(data), np.quantile(data, q)))

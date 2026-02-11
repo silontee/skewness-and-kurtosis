@@ -1,102 +1,94 @@
 import os
 import numpy as np
-import pandas as pd
 import matplotlib.pyplot as plt
 import scipy.stats as stats
 
-# 프로젝트 내부 모듈 사용 (이전과 동일)
-from src.baselines import xmax_from_data
-from src.metrics import empirical_pmf, l1_sum_abs
-from src.orthopoly import get_charlier_psi
+# 프로젝트 내부 모듈 활용
+from src.metrics import empirical_pmf, l1_sum_abs #
+from src.orthopoly import get_charlier_psi #
+from src.expansions_mom import normalize_pmf #
 
 RESULT_DIR = "result"
-def ensure_dirs(): os.makedirs(RESULT_DIR, exist_ok=True)
+os.makedirs(RESULT_DIR, exist_ok=True)
 
-def pmf_to_safe(p):
-    """비음수성 보정 및 정규화"""
-    p = np.asarray(p, dtype=float)
-    p[p < 0] = 0.0
-    s = p.sum()
-    return p / s if s > 0 else np.ones_like(p) / len(p)
-
-# --- 수렴 증명용 'Clean Bimodal' 데이터 생성 ---
 def generate_success_data(n_samples=10000, seed=42):
+    """수렴 증명용 'Clean Bimodal' 데이터 생성"""
     np.random.seed(seed)
-    n1, n2 = n_samples // 2, n_samples - (n_samples // 2)
-    # 두 개의 포아송 분포를 섞어 V/M을 낮게 유지 (약 1.8)
-    g1 = np.random.poisson(3, n1)
-    g2 = np.random.poisson(8, n2)
-    return np.concatenate([g1, g2])
+    n1 = n_samples // 2
+    n2 = n_samples - n1
+    # 평균 3과 8의 포아송 분포를 섞어 이상적인 수렴 환경 조성
+    data = np.concatenate([np.random.poisson(3, n1), np.random.poisson(8, n2)])
+    return data
 
 def run_success_analysis():
-    ensure_dirs()
     data = generate_success_data()
-    mu = np.mean(data)
-    var = np.var(data)
+    mu, var = np.mean(data), np.var(data)
     
-    # 1. 그리드 및 실제 확률(Empirical) 계산
-    xmax = int(np.max(data) + 2)
-    grid = np.arange(xmax + 1)
-    emp = empirical_pmf(data, xmax)
+    # 1. 그리드 설정 및 실제 확률(Empirical) 계산
+    grid = np.arange(int(np.max(data)) + 3)
+    emp = empirical_pmf(data, grid[-1])
     
-    print(f"📊 수렴 테스트 데이터 정보:")
-    print(f"   n={len(data)}, Mean={mu:.4f}, Var={var:.4f}, V/M={var/mu:.4f}")
-
     # 2. PC 차수별 계산 (0, 2, 4, 6, 8차)
     orders = [0, 2, 4, 6, 8]
+    full_psi = get_charlier_psi(np.arange(np.max(data) + 1), mu, K=max(orders)) #
+    theta_all = np.mean(full_psi[data], axis=0) #
     
-    # 계수(Theta) 계산: 인덱스 에러 방지를 위해 전체 데이터 범위 사용
-    full_psi = get_charlier_psi(np.arange(np.max(data) + 1), mu, K=max(orders))
-    theta_all = np.mean(full_psi[data], axis=0)
-    
-    # 시각화용 그리드 다항식
     psi_grid = get_charlier_psi(grid, mu, K=max(orders))
     base_pois = stats.poisson.pmf(grid, mu)
     
-    order_pmfs = {}
     l1_results = []
+    order_pmfs = {}
 
     for K in orders:
-        tilt = 1.0
-        for k in range(1, K + 1):
-            tilt += theta_all[k] * psi_grid[:, k]
+        tilt = 1.0 + (psi_grid[:, 1:K+1] @ theta_all[1:K+1]) #
+        p_k = normalize_pmf(base_pois * tilt) #
         
-        p_k = pmf_to_safe(base_pois * tilt)
-        l1 = l1_sum_abs(emp, p_k)
+        l1 = l1_sum_abs(emp, p_k) #
         l1_results.append({"Order": f"PC-Order {K}", "L1": l1, "thetas": theta_all[:K+1]})
         order_pmfs[K] = p_k
 
-    # 3. 시각화 (수렴의 정석)
+    # 3. 시각화 (Convergence Graph)
     plt.figure(figsize=(12, 7))
-    plt.bar(grid, emp, width=1.0, alpha=0.2, color='gray', edgecolor='black', label='Empirical (Clean Bimodal)')
-    
+    plt.bar(grid, emp, width=1.0, alpha=0.2, color='gray', edgecolor='black', label='Empirical')
     colors = plt.cm.plasma(np.linspace(0.1, 0.9, len(orders)))
     for i, K in enumerate(orders):
-        label = "Poisson (Base)" if K == 0 else f"PC Order {K}"
-        ls = '-' if K == 8 else '--'
-        lw = 3 if K == 8 else 1.5
-        plt.plot(grid, order_pmfs[K], label=f"{label} (L1: {l1_results[i]['L1']:.4f})", 
-                 color=colors[i], ls=ls, lw=lw)
-
-    plt.title("Convergence Success: PC Expansion Capturing Bimodal Shape", fontsize=15, fontweight='bold')
-    plt.xlabel("Count (x)"); plt.ylabel("Probability")
+        plt.plot(grid, order_pmfs[K], label=f"Order {K} (L1: {l1_results[i]['L1']:.4f})", 
+                 color=colors[i], ls='-' if K == 8 else '--', lw=3 if K == 8 else 1.5)
+    plt.title("Convergence Success: PC Expansion Capturing Bimodal Shape", fontsize=14, fontweight='bold')
     plt.legend(); plt.grid(axis='y', alpha=0.3); plt.tight_layout()
-    plt.savefig("result/plot_success_convergence.png", dpi=300)
+    plt.savefig(f"{RESULT_DIR}/plot_success_convergence.png", dpi=300)
 
-    # 4. 리포트 작성
-    with open("result/report_success_case.txt", "w", encoding="utf-8") as f:
-        f.write("="*80 + "\n")
-        f.write(f"{'SNP CONVERGENCE SUCCESS CASE REPORT':^80}\n")
-        f.write("="*80 + "\n\n")
-        f.write(f"Stats: n={len(data)}, Mean={mu:.4f}, V/M={var/mu:.4f}\n\n")
+    # 4. 리포트 작성 (FIFA 스타일 양식 적용)
+    with open(f"{RESULT_DIR}/report_success_case.txt", "w", encoding="utf-8") as f:
+        f.write("="*125 + "\n")
+        f.write(f"{'SUCCESS CASE: PC EXPANSION CONVERGENCE REPORT':^125}\n")
+        f.write("="*125 + "\n\n")
         
-        f.write(f"{'Model':<20} | {'L1 Discrepancy':>20}\n")
-        f.write("-" * 43 + "\n")
+        f.write(f"▶ Dataset Stats: n={len(data)}, Mean={mu:.4f}, V/M={var/mu:.4f}\n\n")
+        
+        f.write("  [ 1. L1 Discrepancy (Convergence Check) ]\n")
+        f.write("  " + "-"*50 + "\n")
         for res in l1_results:
-            f.write(f"{res['Order']:<20} | {res['L1']:>20.6f}\n")
+            f.write(f"  {res['Order']:<25} | {res['L1']:>18.6f}\n")
+        f.write("  " + "-"*50 + "\n\n")
+        
+        f.write("  [ 2. Parameter Details ]\n")
+        header = f"  {'Model':<15} | {'mu':>8} | {'t1':>8} | {'t2':>8} | {'t3':>8} | {'t4':>8} | {'t5':>8} | {'t6':>8} | {'t7':>8} | {'t8':>8} |"
+        f.write(header + "\n")
+        f.write("  " + "-" * (len(header) - 2) + "\n")
+        
+        for res in l1_results:
+            t_list = res['thetas']
+            t_padded = [0.0] * 8 # t1 ~ t8 공간 확보
+            for idx, val in enumerate(t_list[1:]): # t0 제외
+                if idx < 8: t_padded[idx] = val
             
-    print(f"✅ 수렴 테스트 완료! L1 오차가 차수에 따라 계단식으로 줄어듭니다.")
-    print(f"결과 확인: result/report_success_case.txt")
+            line = f"  {res['Order']:<15} | {mu:>8.3f} |"
+            for t_val in t_padded:
+                line += f" {t_val:>8.4f} |"
+            f.write(line + "\n")
+            
+    print(f"✅ 수렴 리포트가  생성되었습니다: {RESULT_DIR}/report_success_case.txt")
 
 if __name__ == "__main__":
     run_success_analysis()

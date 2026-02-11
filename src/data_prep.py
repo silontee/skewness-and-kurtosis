@@ -1,12 +1,12 @@
-# src/data_prep.py
 import numpy as np
 import pandas as pd
-
+# FIFA데이터만 선택
 def load_fifa_counts(results_csv_path: str):
     df = pd.read_csv(results_csv_path)
     df_wc = df[df["tournament"] == "FIFA World Cup"].copy()
     x = (df_wc["home_score"] + df_wc["away_score"]).dropna().astype(int).to_numpy()
     return x[x >= 0]
+
 
 def insurance_bimodal_to_count(insurance_csv_path: str, col="charges", bin_width=3000, cap_p=95):
     """
