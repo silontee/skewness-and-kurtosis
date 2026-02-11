@@ -17,90 +17,72 @@ def ensure_dirs():
 
 def pmf_to_safe(p):
     p = np.asarray(p, dtype=float)
+    # 음수 확률을 0으로 처리하는 것은 수치적 안정성을 위한 필수적 제약 조건입니다.
     p[p < 0] = 0.0
     s = p.sum()
     return p / s if s > 0 else np.ones_like(p) / len(p)
 
 def plot_all(name, grid, emp, model_dict, save_path):
-    """
-    가독성 및 분석 목적 최적화 버전:
-    - Empirical: width=1.0으로 빈틈없이 연결 (색상 진하게)
-    - Jitter: 간격을 더 넓게(0.1 -> 0.2) 설정하여 겹침 완전 해소
-    - Visibility: Insurance에서 PC가 튀더라도 전체 범위를 다 보여줌
-    """
     plt.figure(figsize=(11, 7))
-    
-    # 1. Empirical: 연결된 바 형태 (width=1.0, alpha=0.35)
-    plt.bar(grid, emp, width=1.0, alpha=0.35, label="Empirical", 
-            color="#2c3e50", edgecolor="#34495e", linewidth=0.7)
+    # 1. Empirical: 연결된 바 형태 (데이터 밀도 강조)
+    plt.bar(grid, emp, width=1.0, alpha=0.3, label="Empirical", color="#2c3e50", edgecolor="#34495e", linewidth=0.5)
 
-    # 2. 모델별 스타일 및 더 넓은 Jitter 설정
-    # Poisson(-0.3), NB(-0.1), PC(+0.1), NBM(+0.3)
+    # 2. 모델별 스타일 및 Jitter 설정
+    # Poisson(-0.25), NB(-0.08), PC(+0.08), NBM(+0.25)
     styles = {
-        "Poisson": {"color": "#95a5a6", "ls": "--", "lw": 1.5, "offset": -0.3, "marker": "x", "ms": 5},
-        "NB":      {"color": "#e67e22", "ls": "--", "lw": 1.5, "offset": -0.1, "marker": "v", "ms": 5},
-        "PC":      {"color": "#2980b9", "ls": "-",  "lw": 2.2, "offset": 0.1,  "marker": "o", "ms": 6},
-        "NBM":     {"color": "#c0392b", "ls": "-",  "lw": 2.2, "offset": 0.3,  "marker": "s", "ms": 6}
+        "Poisson": {"color": "#95a5a6", "ls": "--", "lw": 1.5, "offset": -0.25, "marker": "x", "ms": 5},
+        "NB":      {"color": "#e67e22", "ls": "--", "lw": 1.5, "offset": -0.08, "marker": "v", "ms": 5},
+        "PC":      {"color": "#2980b9", "ls": "-",  "lw": 2.2, "offset": 0.08,  "marker": "o", "ms": 6},
+        "NBM":     {"color": "#c0392b", "ls": "-",  "lw": 2.2, "offset": 0.25,  "marker": "s", "ms": 6}
     }
 
     for label in ["Poisson", "NB", "PC", "NBM"]:
         if label in model_dict:
             st = styles[label]
-            # 지터링 적용하여 선 분리
             plt.plot(grid + st["offset"], model_dict[label], label=label, 
                      color=st["color"], linestyle=st["ls"], linewidth=st["lw"],
                      marker=st["marker"], markersize=st["ms"], alpha=0.9)
 
-    # 3. Y축 범위 설정: 전체를 다 보여주되 상단 여백만 살짝 추가
-    # PC가 폭주하는 경우 그 모습이 그대로 드러나도록 강제 확대(ylim)를 제거함
     plt.autoscale(enable=True, axis='y', tight=False)
-    
-    plt.title(f"PMF Fitting Analysis (Full View): {name}", fontsize=15, fontweight='bold', pad=20)
-    plt.xlabel("Count (x)", fontsize=12)
-    plt.ylabel("Probability", fontsize=12)
+    plt.title(f"PMF Fitting Analysis (Optimized View): {name}", fontsize=15, fontweight='bold', pad=20)
+    plt.xlabel("Count (x)", fontsize=12); plt.ylabel("Probability", fontsize=12)
     plt.legend(loc='upper right', frameon=True, shadow=True, fontsize=10)
-    plt.grid(axis='y', linestyle=':', alpha=0.5)
-    
-    plt.tight_layout()
-    plt.savefig(save_path, dpi=300)
-    plt.close()
+    plt.grid(axis='y', linestyle=':', alpha=0.4)
+    plt.tight_layout(); plt.savefig(save_path, dpi=300); plt.close()
 
 def evaluate_one(name, data, extra_meta=None):
     data = np.asarray(data, dtype=int)
     xmax = xmax_from_data(data, q=0.999)
     grid = np.arange(xmax + 1)
     emp = empirical_pmf(data, xmax)
-
-    rows = []
-    models_for_plot = {}
+    rows, models_for_plot = [], {}
 
     # (1) Poisson
     mu, wP = poisson_baseline(data)
     p_pois = pmf_to_safe(wP(grid))
-    rows.append({"dataset": name, "model": "Poisson", "L1_diff": l1_sum_abs(emp, p_pois), "params": {"mu": mu}})
+    rows.append({"model": "Poisson", "L1_diff": l1_sum_abs(emp, p_pois), "params": {"mu": mu}})
     models_for_plot["Poisson"] = p_pois
 
-    # (2) PC
+    # (2) PC (Poisson-Charlier)
     p_pc, info_pc = fit_pc_pmf(data, grid)
     p_pc = pmf_to_safe(p_pc)
-    rows.append({"dataset": name, "model": "PC", "L1_diff": l1_sum_abs(emp, p_pc), "params": info_pc})
+    rows.append({"model": "PC", "L1_diff": l1_sum_abs(emp, p_pc), "params": info_pc})
     models_for_plot["PC"] = p_pc
 
     # (3) NB
     p_nb, info_nb = nb_pmf_mom_or_poisson(data, grid)
     p_nb = pmf_to_safe(p_nb)
-    rows.append({"dataset": name, "model": "NB", "L1_diff": l1_sum_abs(emp, p_nb), "params": info_nb})
+    rows.append({"model": "NB", "L1_diff": l1_sum_abs(emp, p_nb), "params": info_nb})
     models_for_plot["NB"] = p_nb
 
-    # (4) NBM
+    # (4) NBM (Negative Binomial Meixner)
     p_nbm, info_nbm = fit_meixner_pmf(data, grid)
     p_nbm = pmf_to_safe(p_nbm) if p_nbm is not None else p_nb.copy()
-    rows.append({"dataset": name, "model": "NBM", "L1_diff": l1_sum_abs(emp, p_nbm), 
-                 "params": info_nbm if info_nbm else info_nb})
+    rows.append({"model": "NBM", "L1_diff": l1_sum_abs(emp, p_nbm), "params": info_nbm if info_nbm else info_nb})
     models_for_plot["NBM"] = p_nbm
 
-    # 순서 고정: NB -> NBM -> Poisson -> PC
-    order = ["NB", "NBM", "Poisson", "PC"]
+    # 순서 정렬: NBM -> NB -> PC -> Poisson
+    order = ["NBM", "NB", "PC", "Poisson"]
     out = pd.DataFrame(rows)
     out['model'] = pd.Categorical(out['model'], categories=order, ordered=True)
     out = out.sort_values("model").reset_index(drop=True)
@@ -119,30 +101,21 @@ def write_report(report_path, all_tables, all_summaries):
         lines.append(f"▶ DATASET: {summary['dataset'].upper()}")
         lines.append(f"  Sample Stats: n={summary['n']:,} | Mean={summary['mean']:.4f} | Var={summary['var']:.4f}")
         lines.append("")
-
         lines.append("  [ 1. Discrepancy Table (L1 Diff) ]")
         lines.append("  " + "-" * 50)
         for _, row in table.iterrows():
             lines.append(f"  {row['model']:<25} | {row['L1_diff']:>18.6f}")
         lines.append("  " + "-" * 50 + "\n")
-
         lines.append("  [ 2. Parameter Details ]")
         lines.append("  " + "-" * 106)
         header = f"  {'Model':<25} | {'mu':>8} | {'beta':>8} | {'c':>8} | {'t1':>8} | {'t2':>8} | {'t3':>8} | {'t4':>8}"
-        lines.append(header)
-        lines.append("  " + "-" * 106)
-
+        lines.append(header); lines.append("  " + "-" * 106)
         for _, row in table.iterrows():
-            p = row['params']
-            mu = f"{float(p.get('mu', 0)):.4f}" if 'mu' in p else "-"
+            p = row['params']; mu = f"{float(p.get('mu', 0)):.4f}" if 'mu' in p else "-"
             beta = f"{float(p.get('beta', 0)):.4f}" if 'beta' in p else "-"
             c = f"{float(p.get('c', 0)):.4f}" if 'c' in p else "-"
             t_raw = p.get('theta', [0, 0, 0, 0, 0])
-            t = [0.0]*5
-            if isinstance(t_raw, dict):
-                for k, v in t_raw.items(): t[int(k)] = v
-            else: t = t_raw
-
+            t = [t_raw.get(str(i), 0) if isinstance(t_raw, dict) else t_raw[i] for i in range(5)]
             line = f"  {row['model']:<25} | {mu:>8} | {beta:>8} | {c:>8} | {t[1]:>8.4f} | {t[2]:>8.4f} | {t[3]:>8.4f} | {t[4]:>8.4f}"
             lines.append(line)
         lines.append("  " + "-" * 106 + "\n" + "." * 115 + "\n")
@@ -152,11 +125,9 @@ def write_report(report_path, all_tables, all_summaries):
 
 def main():
     ensure_dirs()
-    fifa_csv = os.path.join(DATA_DIR, "results.csv")
-    ins_csv = os.path.join(DATA_DIR, "insurance.csv")
-    
+    fifa_csv, ins_csv = os.path.join(DATA_DIR, "results.csv"), os.path.join(DATA_DIR, "insurance.csv")
     fifa = load_fifa_counts(fifa_csv)
-    ins, ins_meta = insurance_bimodal_to_count(ins_csv, bin_width=1200)
+    ins, ins_meta = insurance_bimodal_to_count(ins_csv, bin_width=2000, truncate_p=92)
 
     all_tables, all_summaries = [], []
     for name, data, meta in [("FIFA", fifa, None), ("Insurance_Binned", ins, ins_meta)]:
