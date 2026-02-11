@@ -3,140 +3,150 @@ import os
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import scipy.stats as stats
 
 from src.data_prep import load_fifa_counts, insurance_bimodal_to_count
 from src.baselines import poisson_baseline, nb_pmf_mom_or_poisson, xmax_from_data
 from src.expansions_mom import fit_pc_pmf, fit_meixner_pmf
 from src.metrics import empirical_pmf, l1_sum_abs
+from src.orthopoly import get_charlier_psi
 
-DATA_DIR = "data"
-RESULT_DIR = "result"
+DATA_DIR, RESULT_DIR = "data", "result"
 
-def ensure_dirs():
-    os.makedirs(RESULT_DIR, exist_ok=True)
+def ensure_dirs(): os.makedirs(RESULT_DIR, exist_ok=True)
 
 def pmf_to_safe(p):
     p = np.asarray(p, dtype=float)
-    # 음수 확률을 0으로 처리하는 것은 수치적 안정성을 위한 필수적 제약 조건입니다.
     p[p < 0] = 0.0
     s = p.sum()
     return p / s if s > 0 else np.ones_like(p) / len(p)
 
-def plot_all(name, grid, emp, model_dict, save_path):
-    plt.figure(figsize=(11, 7))
-    # 1. Empirical: 연결된 바 형태 (데이터 밀도 강조)
-    plt.bar(grid, emp, width=1.0, alpha=0.3, label="Empirical", color="#2c3e50", edgecolor="#34495e", linewidth=0.5)
+# --- PC 차수별 계산 (0, 1, 2, 3, 4, 8차) ---
+def evaluate_pc_order_series(data, grid, emp, mu, orders=[0, 1, 2, 3, 4, 8]):
+    base_pois = stats.poisson.pmf(grid, mu)
+    psi_full = get_charlier_psi(grid, mu, K=max(orders))
+    theta_all = np.mean(psi_full[data], axis=0)
+    
+    order_rows = []
+    order_pmfs = {}
+    for K in orders:
+        tilt = 1.0
+        for k in range(1, K + 1):
+            tilt += theta_all[k] * psi_full[:, k]
+        p_k = pmf_to_safe(base_pois * tilt)
+        l1 = l1_sum_abs(emp, p_k)
+        # 리포트 출력을 위해 params에 mu와 8차까지의 theta를 다 넣어둡니다.
+        order_rows.append({
+            "model": f"PC-Order {K}", 
+            "L1_diff": l1, 
+            "params": {"mu": mu, "theta": theta_all[:K+1]}
+        })
+        order_pmfs[K] = p_k
+    return pd.DataFrame(order_rows), order_pmfs
 
-    # 2. 모델별 스타일 및 Jitter 설정
-    # Poisson(-0.25), NB(-0.08), PC(+0.08), NBM(+0.25)
-    styles = {
-        "Poisson": {"color": "#95a5a6", "ls": "--", "lw": 1.5, "offset": -0.25, "marker": "x", "ms": 5},
-        "NB":      {"color": "#e67e22", "ls": "--", "lw": 1.5, "offset": -0.08, "marker": "v", "ms": 5},
-        "PC":      {"color": "#2980b9", "ls": "-",  "lw": 2.2, "offset": 0.08,  "marker": "o", "ms": 6},
-        "NBM":     {"color": "#c0392b", "ls": "-",  "lw": 2.2, "offset": 0.25,  "marker": "s", "ms": 6}
-    }
+# --- 시각화 함수들 ---
+def plot_standard(name, grid, emp, model_dict, save_path):
+    plt.figure(figsize=(10, 6))
+    plt.bar(grid, emp, width=1.0, alpha=0.3, label="Empirical", color="#2c3e50")
+    styles = {"Poisson": "#95a5a6", "NB": "#e67e22", "PC": "#2980b9", "NBM": "#c0392b"}
+    for label, pmf in model_dict.items():
+        plt.plot(grid, pmf, label=label, color=styles[label], lw=2, marker='o', ms=3)
+    plt.title(f"Standard Comparison: {name}"); plt.legend(); plt.savefig(save_path); plt.close()
 
-    for label in ["Poisson", "NB", "PC", "NBM"]:
-        if label in model_dict:
-            st = styles[label]
-            plt.plot(grid + st["offset"], model_dict[label], label=label, 
-                     color=st["color"], linestyle=st["ls"], linewidth=st["lw"],
-                     marker=st["marker"], markersize=st["ms"], alpha=0.9)
+def plot_pc_limit(name, grid, emp, order_pmfs, save_path):
+    plt.figure(figsize=(10, 6))
+    plt.bar(grid, emp, width=1.0, alpha=0.2, color='gray', label='Empirical')
+    colors = plt.cm.viridis(np.linspace(0, 1, len(order_pmfs)))
+    for i, (K, pmf) in enumerate(order_pmfs.items()):
+        plt.plot(grid, pmf, label=f"PC Order {K}" if K>0 else "Poisson", color=colors[i], lw=2)
+    plt.title(f"PC Expansion Convergence Limit: {name}"); plt.legend(); plt.savefig(save_path); plt.close()
 
-    plt.autoscale(enable=True, axis='y', tight=False)
-    plt.title(f"PMF Fitting Analysis (Optimized View): {name}", fontsize=15, fontweight='bold', pad=20)
-    plt.xlabel("Count (x)", fontsize=12); plt.ylabel("Probability", fontsize=12)
-    plt.legend(loc='upper right', frameon=True, shadow=True, fontsize=10)
-    plt.grid(axis='y', linestyle=':', alpha=0.4)
-    plt.tight_layout(); plt.savefig(save_path, dpi=300); plt.close()
+# --- 리포트 작성 (theta 8차 지원) ---
+def write_final_report(path, tables, summaries):
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("="*120 + "\n")
+        f.write(f"{'SNP COMPREHENSIVE ANALYSIS REPORT':^120}\n")
+        f.write("="*120 + "\n\n")
 
-def evaluate_one(name, data, extra_meta=None):
-    data = np.asarray(data, dtype=int)
-    xmax = xmax_from_data(data, q=0.999)
-    grid = np.arange(xmax + 1)
-    emp = empirical_pmf(data, xmax)
-    rows, models_for_plot = [], {}
+        for (title, table), summary in zip(tables, summaries):
+            f.write(f"▶ {title}\n")
+            f.write(f"  Stats: n={summary['n']}, Mean={summary['mu']:.4f}\n\n")
+            
+            # 1. L1 Table
+            f.write("  [ 1. L1 Discrepancy ]\n")
+            f.write("  " + "-"*50 + "\n")
+            for _, r in table.iterrows():
+                f.write(f"  {r['model']:<25} | {r['L1_diff']:>18.6f}\n")
+            f.write("  " + "-"*50 + "\n\n")
 
-    # (1) Poisson
-    mu, wP = poisson_baseline(data)
-    p_pois = pmf_to_safe(wP(grid))
-    rows.append({"model": "Poisson", "L1_diff": l1_sum_abs(emp, p_pois), "params": {"mu": mu}})
-    models_for_plot["Poisson"] = p_pois
+            # 2. Parameter Table (Dynamic Theta)
+            f.write("  [ 2. Parameter Details ]\n")
+            # 최대 차수를 계산하여 헤더 생성
+            max_t = 0
+            for _, r in table.iterrows():
+                t_len = len(r['params'].get('theta', [])) - 1
+                if t_len > max_t: max_t = t_len
+            
+            header = f"  {'Model':<20} | {'mu':>7} | {'beta':>7} |"
+            for i in range(1, max_t + 1): header += f" {'t'+str(i):>8} |"
+            f.write(header + "\n")
+            f.write("  " + "-" * len(header) + "\n")
 
-    # (2) PC (Poisson-Charlier)
-    p_pc, info_pc = fit_pc_pmf(data, grid)
-    p_pc = pmf_to_safe(p_pc)
-    rows.append({"model": "PC", "L1_diff": l1_sum_abs(emp, p_pc), "params": info_pc})
-    models_for_plot["PC"] = p_pc
-
-    # (3) NB
-    p_nb, info_nb = nb_pmf_mom_or_poisson(data, grid)
-    p_nb = pmf_to_safe(p_nb)
-    rows.append({"model": "NB", "L1_diff": l1_sum_abs(emp, p_nb), "params": info_nb})
-    models_for_plot["NB"] = p_nb
-
-    # (4) NBM (Negative Binomial Meixner)
-    p_nbm, info_nbm = fit_meixner_pmf(data, grid)
-    p_nbm = pmf_to_safe(p_nbm) if p_nbm is not None else p_nb.copy()
-    rows.append({"model": "NBM", "L1_diff": l1_sum_abs(emp, p_nbm), "params": info_nbm if info_nbm else info_nb})
-    models_for_plot["NBM"] = p_nbm
-
-    # 순서 정렬: NBM -> NB -> PC -> Poisson
-    order = ["NBM", "NB", "PC", "Poisson"]
-    out = pd.DataFrame(rows)
-    out['model'] = pd.Categorical(out['model'], categories=order, ordered=True)
-    out = out.sort_values("model").reset_index(drop=True)
-
-    summary = {"dataset": name, "n": len(data), "mean": np.mean(data), "var": np.var(data), "meta": extra_meta}
-    return out, summary, grid, emp, models_for_plot
-
-def write_report(report_path, all_tables, all_summaries):
-    lines = []
-    lines.append("=" * 115)
-    lines.append(f"{'SNP DISCREPANCY & PARAMETER REPORT':^115}")
-    lines.append("=" * 115)
-    lines.append("-" * 115 + "\n")
-
-    for summary, table in zip(all_summaries, all_tables):
-        lines.append(f"▶ DATASET: {summary['dataset'].upper()}")
-        lines.append(f"  Sample Stats: n={summary['n']:,} | Mean={summary['mean']:.4f} | Var={summary['var']:.4f}")
-        lines.append("")
-        lines.append("  [ 1. Discrepancy Table (L1 Diff) ]")
-        lines.append("  " + "-" * 50)
-        for _, row in table.iterrows():
-            lines.append(f"  {row['model']:<25} | {row['L1_diff']:>18.6f}")
-        lines.append("  " + "-" * 50 + "\n")
-        lines.append("  [ 2. Parameter Details ]")
-        lines.append("  " + "-" * 106)
-        header = f"  {'Model':<25} | {'mu':>8} | {'beta':>8} | {'c':>8} | {'t1':>8} | {'t2':>8} | {'t3':>8} | {'t4':>8}"
-        lines.append(header); lines.append("  " + "-" * 106)
-        for _, row in table.iterrows():
-            p = row['params']; mu = f"{float(p.get('mu', 0)):.4f}" if 'mu' in p else "-"
-            beta = f"{float(p.get('beta', 0)):.4f}" if 'beta' in p else "-"
-            c = f"{float(p.get('c', 0)):.4f}" if 'c' in p else "-"
-            t_raw = p.get('theta', [0, 0, 0, 0, 0])
-            t = [t_raw.get(str(i), 0) if isinstance(t_raw, dict) else t_raw[i] for i in range(5)]
-            line = f"  {row['model']:<25} | {mu:>8} | {beta:>8} | {c:>8} | {t[1]:>8.4f} | {t[2]:>8.4f} | {t[3]:>8.4f} | {t[4]:>8.4f}"
-            lines.append(line)
-        lines.append("  " + "-" * 106 + "\n" + "." * 115 + "\n")
-
-    with open(report_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines))
+            for _, r in table.iterrows():
+                p = r['params']
+                mu = f"{float(p.get('mu', 0)):.3f}" if 'mu' in p else "-"
+                beta = f"{float(p.get('beta', 0)):.3f}" if 'beta' in p else "-"
+                line = f"  {r['model']:<20} | {mu:>7} | {beta:>7} |"
+                
+                t_list = p.get('theta', [])
+                for i in range(1, max_t + 1):
+                    val = t_list[i] if i < len(t_list) else 0.0
+                    line += f" {val:>8.4f} |"
+                f.write(line + "\n")
+            f.write("\n" + "."*120 + "\n\n")
 
 def main():
     ensure_dirs()
-    fifa_csv, ins_csv = os.path.join(DATA_DIR, "results.csv"), os.path.join(DATA_DIR, "insurance.csv")
-    fifa = load_fifa_counts(fifa_csv)
-    ins, ins_meta = insurance_bimodal_to_count(ins_csv, bin_width=2000, truncate_p=92)
+    fifa = load_fifa_counts("data/results.csv")
+    ins, _ = insurance_bimodal_to_count("data/insurance.csv", bin_width=3000, cap_p=95)
 
-    all_tables, all_summaries = [], []
-    for name, data, meta in [("FIFA", fifa, None), ("Insurance_Binned", ins, ins_meta)]:
-        t, s, grid, emp, models = evaluate_one(name, data, extra_meta=meta)
-        all_tables.append(t); all_summaries.append(s)
-        plot_all(name, grid, emp, models, os.path.join(RESULT_DIR, f"plot_{name}.png"))
+    tables, summaries = [], []
 
-    write_report(os.path.join(RESULT_DIR, "report.txt"), all_tables, all_summaries)
-    print(f"✅ 분석 완료! '{RESULT_DIR}' 폴더에서 리포트와 그래프를 확인하세요.")
+    # (1) FIFA Standard
+    grid_f = np.arange(xmax_from_data(fifa, q=0.999) + 1)
+    emp_f = empirical_pmf(fifa, len(grid_f)-1)
+    mu_f, _ = poisson_baseline(fifa)
+    p_nbm_f, i_nbm_f = fit_meixner_pmf(fifa, grid_f)
+    p_nb_f, i_nb_f = nb_pmf_mom_or_poisson(fifa, grid_f)
+    p_pc_f, i_pc_f = fit_pc_pmf(fifa, grid_f)
+    
+    m_f = {"NBM": pmf_to_safe(p_nbm_f), "NB": pmf_to_safe(p_nb_f), "PC": pmf_to_safe(p_pc_f), "Poisson": pmf_to_safe(stats.poisson.pmf(grid_f, mu_f))}
+    t_f = pd.DataFrame([{"model": k, "L1_diff": l1_sum_abs(emp_f, v), "params": (i_nbm_f if k=="NBM" else i_nb_f if k=="NB" else i_pc_f if k=="PC" else {"mu": mu_f})} for k, v in m_f.items()])
+    tables.append(("FIFA Standard Comparison", t_f))
+    summaries.append({"n": len(fifa), "mu": mu_f})
+    plot_standard("FIFA", grid_f, emp_f, m_f, "result/plot_fifa_standard.png")
 
-if __name__ == "__main__":
-    main()
+    # (2) Insurance Standard
+    grid_i = np.arange(xmax_from_data(ins, q=0.999) + 1)
+    emp_i = empirical_pmf(ins, len(grid_i)-1)
+    mu_i, _ = poisson_baseline(ins)
+    p_nbm_i, i_nbm_i = fit_meixner_pmf(ins, grid_i)
+    p_nb_i, i_nb_i = nb_pmf_mom_or_poisson(ins, grid_i)
+    p_pc_i, i_pc_i = fit_pc_pmf(ins, grid_i)
+
+    m_i = {"NBM": pmf_to_safe(p_nbm_i), "NB": pmf_to_safe(p_nb_i), "PC": pmf_to_safe(p_pc_i), "Poisson": pmf_to_safe(stats.poisson.pmf(grid_i, mu_i))}
+    t_i = pd.DataFrame([{"model": k, "L1_diff": l1_sum_abs(emp_i, v), "params": (i_nbm_i if k=="NBM" else i_nb_i if k=="NB" else i_pc_i if k=="PC" else {"mu": mu_i})} for k, v in m_i.items()])
+    tables.append(("Insurance Standard Comparison", t_i))
+    summaries.append({"n": len(ins), "mu": mu_i})
+    plot_standard("Insurance", grid_i, emp_i, m_i, "result/plot_ins_standard.png")
+
+    # (3) Insurance PC Orders (Table 3 & Plot 3)
+    t_pc_ord, p_pc_ord = evaluate_pc_order_series(ins, grid_i, emp_i, mu_i)
+    tables.append(("Insurance PC Order Convergence Analysis", t_pc_ord))
+    summaries.append({"n": len(ins), "mu": mu_i})
+    plot_pc_limit("Insurance", grid_i, emp_i, p_pc_ord, "result/plot_ins_pc_limit.png")
+
+    write_final_report("result/report.txt", tables, summaries)
+    print("✅ 분석 완료! 표 3개와 그래프 3개가 result 폴더에 생성되었습니다.")
+
+if __name__ == "__main__": main()
