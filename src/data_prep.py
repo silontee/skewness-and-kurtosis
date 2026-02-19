@@ -1,10 +1,10 @@
 import numpy as np
-import pandas as pd
+import polars as pl
 # FIFA데이터만 선택
 def load_fifa_counts(results_csv_path: str):
-    df = pd.read_csv(results_csv_path)
-    df_wc = df[df["tournament"] == "FIFA World Cup"].copy()
-    x = (df_wc["home_score"] + df_wc["away_score"]).dropna().astype(int).to_numpy()
+    df = pl.read_csv(results_csv_path)
+    df_wc = df.filter(pl.col("tournament") == "FIFA World Cup")
+    x = (df_wc["home_score"] + df_wc["away_score"]).drop_nulls().cast(pl.Int64).to_numpy()
     return x[x >= 0]
 
 
@@ -14,8 +14,8 @@ def insurance_bimodal_to_count(insurance_csv_path: str, col="charges", bin_width
     - bin_width: 3000 (V/M Ratio를 PC 모델 안정권인 2.5 내외로 조절)
     - cap_p: 95 (상위 5% 데이터를 버리지 않고 임계값으로 고정)
     """
-    df = pd.read_csv(insurance_csv_path)
-    raw_x = pd.to_numeric(df[col], errors="coerce").dropna().astype(float).to_numpy()
+    df = pl.read_csv(insurance_csv_path)
+    raw_x = df[col].cast(pl.Float64, strict=False).drop_nulls().to_numpy()
 
     # 1. Winsorization (Capping): 꼬리 데이터를 삭제하지 않고 포함
     cap_value = np.percentile(raw_x, cap_p)
@@ -23,10 +23,10 @@ def insurance_bimodal_to_count(insurance_csv_path: str, col="charges", bin_width
 
     # 2. 고정 폭 Binning
     cats = (capped_x // bin_width).astype(int)
-    
+
     mean_val = np.mean(cats)
     var_val = np.var(cats)
-    
+
     meta = {
         "method": f"Winsorization at {cap_p}%",
         "bin_width": bin_width,

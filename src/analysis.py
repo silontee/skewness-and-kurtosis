@@ -1,6 +1,6 @@
 # src/analysis.py
 import numpy as np
-import pandas as pd
+import polars as pl
 import matplotlib.pyplot as plt
 import scipy.stats as stats
 from src.orthopoly import get_charlier_psi
@@ -11,23 +11,23 @@ def run_convergence_study(data, grid, emp, mu, orders=[0, 4, 6, 8]):
     """차수별 수렴도를 분석하여 데이터프레임과 PMF들을 반환"""
     base_pois = stats.poisson.pmf(grid, mu)
     psi_grid = get_charlier_psi(grid, mu, K=max(orders))
-    
+
     # 데이터 전체 범위에서 계수 추출 (Eq 17: θ*_n = E_p[ψ_n(X)])
     psi_at_data = get_charlier_psi(np.arange(np.max(data) + 1), mu, K=max(orders))
     theta_all = np.mean(psi_at_data[data], axis=0)
     theta_all[1] = 0.0  # Proposition 2: 평균 매칭(μ=E[X]) 시 θ₁=0
-    
+
     order_rows, order_pmfs = [], {}
     for K in orders:
         tilt = 1.0 + (psi_grid[:, 1:K+1] @ theta_all[1:K+1])
         p_k = normalize_pmf(base_pois * tilt)
         order_rows.append({
-            "model": f"PC-Order {K}", 
-            "L1_diff": l1_sum_abs(emp, p_k), 
-            "theta": theta_all[:K+1]
+            "model": f"PC-Order {K}",
+            "L1_diff": l1_sum_abs(emp, p_k),
+            "theta": theta_all[:K+1].tolist()
         })
         order_pmfs[K] = p_k
-    return pd.DataFrame(order_rows), order_pmfs
+    return pl.DataFrame(order_rows), order_pmfs
 
 def plot_comparison(name, grid, emp, model_dict, save_path):
     """표준 4대 모델 비교 그래프 (FIFA, Insurance, Simul_Heavy 용)"""
@@ -56,7 +56,7 @@ def plot_pc_convergence(name, grid, emp, order_pmfs, l1_results, save_path):
     
     colors = plt.cm.plasma(np.linspace(0.1, 0.9, len(order_pmfs)))
     for i, (K, pmf) in enumerate(order_pmfs.items()):
-        l1_val = l1_results[l1_results['model'] == f"PC-Order {K}"]['L1_diff'].values[0]
+        l1_val = l1_results.filter(pl.col('model') == f"PC-Order {K}")['L1_diff'][0]
         label = "Poisson (Base)" if K == 0 else f"PC Order {K}"
         plt.plot(grid, pmf, label=f"{label} (L1: {l1_val:.4f})", 
                  color=colors[i], ls='-' if K == 8 else '--', lw=3 if K == 8 else 1.8)

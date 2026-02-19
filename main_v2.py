@@ -1,7 +1,6 @@
 # main.py
 import os
 import numpy as np
-import pandas as pd
 import scipy.stats as stats
 from src.data_prep_v2 import load_fifa_counts, insurance_bimodal_to_count, load_sepsis_hr_counts, load_sepsis_lab_counts, load_tumor_size_counts
 from src.baselines import nb_pmf_mom_or_poisson, xmax_from_data
@@ -27,16 +26,16 @@ def write_report_section(f, title, data_stats, table_data):
     
     f.write("  [ 1. L1 Discrepancy ]\n")
     f.write("  " + "-"*50 + "\n")
-    for _, row in table_data.iterrows():
+    for row in table_data:
         f.write(f"  {row['model']:<25} | {row['L1_diff']:>18.6f}\n")
     f.write("  " + "-"*50 + "\n\n")
-    
+
     f.write("  [ 2. Parameter Details ]\n")
     header = f"  {'Model':<15} | {'mu':>8} | {'t1':>8} | {'t2':>8} | {'t3':>8} | {'t4':>8} | {'t5':>8} | {'t6':>8} | {'t7':>8} | {'t8':>8} |"
     f.write(header + "\n")
     f.write("  " + "-" * (len(header) - 2) + "\n")
-    
-    for _, row in table_data.iterrows():
+
+    for row in table_data:
         p = row['params']
         mu_val = p.get('mu', data_stats['mu'])
         t_list = p.get('theta', [0.0])
@@ -89,7 +88,7 @@ def main():
                 {"model": "PC", "L1_diff": l1_sum_abs(emp, m_dict["PC"]), "params": i_pc},
                 {"model": "Poisson", "L1_diff": l1_sum_abs(emp, m_dict["Poisson"]), "params": {"mu": mu, "theta": [0]}}
             ]
-            write_report_section(f, f"{name}: STANDARD MODEL COMPARISON", stats_dict, pd.DataFrame(std_rows))
+            write_report_section(f, f"{name}: STANDARD MODEL COMPARISON", stats_dict, std_rows)
 
         # 2부: CONVERGENCE STUDY (Insurance -> Simul_Success)
         for name, data in datasets:
@@ -103,8 +102,8 @@ def main():
             df_conv, p_conv = run_convergence_study(data, grid, emp, mu, orders=[0, 2, 4, 6, 8])
             plot_pc_convergence(name, grid, emp, p_conv, df_conv, f"{RESULT_DIR}/plot_{name}_convergence.png")
             
-            conv_rows = [{"model": r['model'], "L1_diff": r['L1_diff'], "params": {"mu": mu, "theta": r['theta']}} for _, r in df_conv.iterrows()]
-            write_report_section(f, f"{name}: PC EXPANSION CONVERGENCE REPORT", stats_dict, pd.DataFrame(conv_rows))
+            conv_rows = [{"model": r['model'], "L1_diff": r['L1_diff'], "params": {"mu": mu, "theta": r['theta']}} for r in df_conv.iter_rows(named=True)]
+            write_report_section(f, f"{name}: PC EXPANSION CONVERGENCE REPORT", stats_dict, conv_rows)
 
     print(f"✅ 분석 완료! '{RESULT_DIR}' 폴더에서 결과표를 확인하세요.")
 
