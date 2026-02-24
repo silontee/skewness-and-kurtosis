@@ -52,26 +52,55 @@ def plot_nbm_l1_convergence(name, df_conv, save_path):
     """
     X축: 차수(K), Y축: L1 Discrepancy를 시각화하는 함수
     """
-    plt.figure(figsize=(8, 5))
+    plt.figure(figsize=(9, 6))
     
     k_vals = [int(m.split()[-1]) for m in df_conv.get_column("model")]
     l1_vals = df_conv.get_column("L1_diff").to_numpy()
     
     plt.plot(k_vals, l1_vals, marker='o', linestyle='-', 
-             color='#d35400', lw=2, ms=7, label='NBM L1 Error')
+             color='#d35400', lw=2.5, ms=8, label='NBM L1 Error', zorder=2)
     
     # 차수별 수치 표시
-    for row in df_conv.iter_rows(named=True):
+    for i, row in enumerate(df_conv.iter_rows(named=True)):
         k_val = int(row['model'].split()[-1])
-        plt.annotate(f"{row['L1_diff']:.4f}", (k_val, row['L1_diff']), 
-                     textcoords="offset points", xytext=(0,10), ha='center', fontsize=9)
-
-    plt.title(f"NBM Convergence L1 Error Trend: {name}", fontsize=14, fontweight='bold')
-    plt.xlabel("Order of Expansion (K)", fontsize=11)
-    plt.ylabel("L1 Discrepancy", fontsize=11)
+        l1_val = row['L1_diff']
+        
+        # 짝수 번째는 위(above), 홀수 번째는 아래(below)로 배치하여 수평 겹침 방지
+        if i % 2 == 0:
+            x_offset = 9
+            y_offset = 15
+            va = 'bottom'
+        else:
+            x_offset = -9
+            y_offset = -15 # 아래쪽은 마커와 겹치지 않게 더 멀리 배치
+            va = 'top'
+            
+        plt.annotate(
+            f"{l1_val:.4f}", 
+            (k_val, l1_val), 
+            textcoords="offset points", 
+            xytext=(x_offset, y_offset), 
+            ha='center', 
+            va=va,
+            fontsize=7,
+            fontweight='bold',
+            color='#2c3e50',
+            # 박스 불투명도를 높여 선이 글자를 가리지 못하게 함
+            #bbox=dict(boxstyle='round,pad=0.3', fc='white', alpha=0.9, ec='#ecf0f1')
+        )
+        
+    # [여백 확보] 위아래로 여백을 충분히 주어 텍스트 박스가 잘리는 것 방지
+    y_min, y_max = min(l1_vals), max(l1_vals)
+    y_range = y_max - y_min if y_max != y_min else 0.1
+    plt.ylim(y_min - y_range * 0.25, y_max + y_range * 0.25)
+    
+    # 그래프 세부 설정
+    plt.title(f"NBM Convergence L1 Error Trend: {name}", fontsize=15, fontweight='bold', pad=30)
+    plt.xlabel("Order of Expansion (K)", fontsize=12)
+    plt.ylabel("L1 Discrepancy", fontsize=12)
     plt.xticks(k_vals)
     plt.grid(True, axis='both', alpha=0.3, ls='--')
-    plt.legend()
+    plt.legend(loc='upper right', frameon=True, shadow=True)
     plt.tight_layout()
     plt.savefig(save_path, dpi=300)
     plt.close()
