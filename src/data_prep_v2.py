@@ -21,22 +21,7 @@ def insurance_bimodal_to_count(insurance_csv_path: str, col="charges", bin_width
     cats = (x // bin_width).astype(int)
     return cats
 
-# 3. Sepsis HR Count 데이터 로드
-def load_sepsis_hr_counts(csv_path: str, cap_p=99.5):
-    """
-    Sepsis 데이터의 환자별 HR 측정 횟수 추출
-    - 상위 0.5% 데이터 제거 (cap_p=99.5)
-    """
-    df = pl.read_csv(csv_path)
-    # Patient_ID별로 실제 HR(심박수) 값이 존재하는 행의 개수 산출
-    hr_counts = df.group_by('Patient_ID').agg(pl.col('HR').count().alias('count'))['count'].to_numpy()
-
-    # 97th Percentile Capping
-    hr_cap = np.percentile(hr_counts, cap_p)
-    data_hr = hr_counts[hr_counts <= hr_cap]
-    return data_hr
-
-# 4. Sepsis Lab Count 데이터 로드
+# 3. Sepsis Lab Count 데이터 로드
 def load_sepsis_lab_counts(csv_path: str, cap_p=99.5):
     """
     Sepsis 데이터의 환자별 Lab 검사 총합 횟수 추출
@@ -60,18 +45,3 @@ def load_sepsis_lab_counts(csv_path: str, cap_p=99.5):
     lab_cap = np.percentile(lab_counts, cap_p)
     data_lab = lab_counts[lab_counts <= lab_cap]
     return data_lab
-
-# 5. Tumor Size 데이터 로드
-def load_tumor_size_counts(csv_path: str, bin_width=5):
-    """
-    SEER 데이터의 종양 크기 전처리
-    - 5mm 단위 Binning 적용
-    """
-    df = pl.read_csv(csv_path)
-    # Tumor Size 컬럼 추출 및 결측치 제거
-    x = df['Tumor Size'].drop_nulls().to_numpy()
-
-    # 5mm 단위로 나누어 정수화
-    x = (x // bin_width).astype(int)
-
-    return x[x >= 0]
