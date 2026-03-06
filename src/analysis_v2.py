@@ -48,141 +48,154 @@ def run_nbm_convergence_study(data, grid, emp, orders=list(range(15))):
         
     return pl.DataFrame(order_rows), order_pmfs
 
+def find_optimal_order(name, df_conv):
+    """
+    L1 에러가 오름차순으로 감소하다가 처음으로 상승하기 직전의 차수를 반환
+    """
+    l1_vals = df_conv.get_column("L1_diff").to_list()
+    k_vals = [int(m.split()[-1]) for m in df_conv.get_column("model").to_list()]
+    
+    # [Step 1] 에러 증가 지점 찾기
+    stop_idx = len(l1_vals) - 1
+    for i in range(1, len(l1_vals)):
+        if l1_vals[i] > l1_vals[i-1]:
+            stop_idx = i - 1 # 증가하기 직전 차수
+            break
+            
+    # [Step 2] 내림차순 역추적 (stop_idx부터 2차까지 역순)
+    opt_k = k_vals[stop_idx]
+    
+    if "Sepsis" in name:
+        # range(start, stop, step) -> stop_idx부터 2까지 역순 탐색
+        for j in range(stop_idx, 1, -1):
+            # 현재 차수(j)의 감소율: L1[j-1] - L1[j]
+            curr_reduction = l1_vals[j-1] - l1_vals[j]
+            # 이전 차수(j-1)의 감소율: L1[j-2] - L1[j-1]
+            prev_reduction = l1_vals[j-2] - l1_vals[j-1]
+            
+            # 💡 감소율 둔화 조건: 현재 스텝의 개선 폭이 이전보다 작아지면
+            if curr_reduction < prev_reduction:
+                # "그 이전 차수(둔화되기 전의 효율적인 차수)"를 최적점으로 선정
+                opt_k = k_vals[j-1]
+                break # 최적점을 찾았으므로 루프 종료
+        
+    return opt_k
+
 def plot_nbm_l1_convergence(name, df_conv, save_path):
-    """
-    X축: 차수(K), Y축: L1 Discrepancy를 시각화하는 함수
-    """
-    plt.figure(figsize=(9, 6))
+    """최적점에 수직 점선을 포함한 L1 수렴도 그래프"""
+    fig, ax = plt.subplots(figsize=(10, 6))
     
     k_vals = [int(m.split()[-1]) for m in df_conv.get_column("model")]
     l1_vals = df_conv.get_column("L1_diff").to_numpy()
     
-    plt.plot(k_vals, l1_vals, marker='o', linestyle='-', 
-             color='#d35400', lw=2.5, ms=8, label='NBM L1 Error', zorder=2)
+    # 최적 차수 찾기
+    opt_k = find_optimal_order(name, df_conv)
     
+    ax.plot(k_vals, l1_vals, marker='o', linestyle='-', 
+             color='#d35400', lw=2.5, ms=8, label='NBM L1 Error', zorder=3)
+    
+    # 💡 [핵심] 최적점 수직선 표시
+    ax.axvline(x=opt_k, color='#c0392b', linestyle='--', lw=2, alpha=0.7, zorder=2)
+
     # 차수별 수치 표시
-    for i, row in enumerate(df_conv.iter_rows(named=True)):
-        k_val = int(row['model'].split()[-1])
-        l1_val = row['L1_diff']
+    for i, (kv, lv) in enumerate(zip(k_vals, l1_vals)):
+        is_optimal = (kv == opt_k)
+        
+        # 최적점일 경우 스타일 변경 (빨간색, Bold)
+        txt_color = 'red' if is_optimal else '#2c3e50'
+        txt_weight = 'bold' if is_optimal else 'normal'
+        txt_size = 11 if is_optimal else 8
         
         # 짝수 번째는 위(above), 홀수 번째는 아래(below)로 배치하여 수평 겹침 방지
         if i % 2 == 0:
-            x_offset = 9
+            x_offset = 11
             y_offset = 15
             va = 'bottom'
         else:
-            x_offset = -9
+            x_offset = -11
             y_offset = -15 # 아래쪽은 마커와 겹치지 않게 더 멀리 배치
             va = 'top'
-            
-        plt.annotate(
-            f"{l1_val:.4f}", 
-            (k_val, l1_val), 
-            textcoords="offset points", 
-            xytext=(x_offset, y_offset), 
-            ha='center', 
-            va=va,
-            fontsize=7,
-            fontweight='bold',
-            color='#2c3e50',
-            # 박스 불투명도를 높여 선이 글자를 가리지 못하게 함
-            #bbox=dict(boxstyle='round,pad=0.3', fc='white', alpha=0.9, ec='#ecf0f1')
-        )
         
-    # [여백 확보] 위아래로 여백을 충분히 주어 텍스트 박스가 잘리는 것 방지
-    y_min, y_max = min(l1_vals), max(l1_vals)
-    y_range = y_max - y_min if y_max != y_min else 0.1
-    plt.ylim(y_min - y_range * 0.25, y_max + y_range * 0.25)
+        if is_optimal:
+            if i % 2 == 0:
+                x_offset = 0
+                y_offset = 15
+                va = 'bottom'
+            else:
+                x_offset = 0
+                y_offset = -15 # 아래쪽은 마커와 겹치지 않게 더 멀리 배치
+                va = 'top'  
+        
+        ax.annotate(
+            f"{lv:.4f}", 
+            (kv, lv), 
+            textcoords="offset points", 
+            xytext=(x_offset, y_offset),
+            ha='center', 
+            va=va, 
+            fontsize=txt_size, 
+            fontweight=txt_weight, 
+            color=txt_color,
+            bbox=dict(boxstyle='round,pad=0.2', fc='white', alpha=0.8, ec=('red' if is_optimal else 'none'))
+        )
+
+    ax.set_title(f"L1 Convergence Trend: {name}", fontsize=14, fontweight='bold', pad=20)
+    ax.set_xlabel("Order (K)", fontsize=11)
+    ax.set_ylabel("L1 Discrepancy", fontsize=11)
+    ax.set_xticks(k_vals)
+    ax.grid(True, alpha=0.3, ls='--')
     
-    # 그래프 세부 설정
-    plt.title(f"NBM Convergence L1 Error Trend: {name}", fontsize=15, fontweight='bold', pad=30)
-    plt.xlabel("Order of Expansion (K)", fontsize=12)
-    plt.ylabel("L1 Discrepancy", fontsize=12)
-    plt.xticks(k_vals)
-    plt.grid(True, axis='both', alpha=0.3, ls='--')
-    plt.legend(loc='upper right', frameon=True, shadow=True)
+    # 여백 확보
+    y_min, y_max = min(l1_vals), max(l1_vals)
+    ax.set_ylim(y_min - (y_max-y_min)*0.3, y_max + (y_max-y_min)*0.3)
+    
+    # 범례에 최적 차수 명시
+    ax.legend([f'L1 Error', f'Optimal Point (K={opt_k})'], loc='upper right')
+    
     plt.tight_layout()
     plt.savefig(save_path, dpi=300)
     plt.close()
     
-def plot_nbm_convergence(name, grid, emp, order_pmfs, l1_results, save_path):
-    """nbm 차수별 수렴 그래프"""
-    plt.figure(figsize=(11, 7))
-    plt.bar(grid, emp, width=1.0, alpha=0.15, color='gray', edgecolor="#333333", label='Empirical Data')
-    
-    colors = plt.cm.plasma(np.linspace(0.1, 0.9, len(order_pmfs)))
-    for i, (K, pmf) in enumerate(order_pmfs.items()):
-        l1_val = l1_results.filter(pl.col('model') == f"NBM-Order {K}")['L1_diff'][0]
-        label = "NB (Base)" if K == 0 else f"NBM Order {K}"
-        plt.plot(grid, pmf, label=f"{label} (L1: {l1_val:.4f})", 
-                 color=colors[i], ls='-' if K == 8 else '--', lw=3 if K == 8 else 1.8)
-        
-    plt.title(f"NBM Expansion Convergence: {name}", fontsize=15, fontweight='bold')
-    plt.legend(); plt.grid(axis='y', alpha=0.2); plt.tight_layout()
-    plt.savefig(save_path, dpi=300); plt.close()
+    return opt_k
 
-def plot_comparison(name, grid, emp, model_dict, save_path):
+def plot_comparison(name, grid, emp, model_dict, save_path, opt_k=None):
     """
-    표준 모델 비교 그래프 (개선 버전)
-    - Sepsis 데이터: Poisson 및 PC PMF 제외
-    - 시각적 개선: 지터(Jitter), 마커 밀도 조절, 그리기 순서 최적화 적용
+    기존 표준 NBM(K=4)과 최적 NBM을 동시에 표시
     """
     plt.figure(figsize=(12, 7))
-
-    # 1. 실제 데이터 분포 (막대 그래프)
-    # 선들이 더 잘 보이도록 막대의 투명도를 높이고 색상을 중립적인 회색톤으로 설정
     plt.bar(grid, emp, width=0.8, alpha=0.15, label="Empirical", color="#2c3e50", zorder=1)
 
-    # 2. 모델별 스타일 및 지터(Jitter) 설정
-    # 각 모델의 마커와 선이 겹치지 않도록 x축에 미세한 offset(지터)을 부여
+    # 모델별 스타일 설정
     styles = {
-        "Poisson": {"color": "#95a5a6", "ls": "--", "lw": 1.5, "offset": -0.3, "marker": "x", "z": 2},
-        "NB":      {"color": "#e67e22", "ls": "--", "lw": 1.5, "offset": -0.1, "marker": "s", "z": 2},
-        "PC":      {"color": "#2980b9", "ls": "-",  "lw": 2.0, "offset": 0.1,  "marker": "^", "z": 3},
-        "NBM":     {"color": "#c0392b", "ls": "-",  "lw": 2.5, "offset": 0.3,  "marker": "o", "z": 4}
+        "Poisson":  {"color": "#95a5a6", "ls": "--", "lw": 1.5, "offset": -0.3, "marker": "x", "z": 2},
+        "NB":       {"color": "#e67e22", "ls": "--", "lw": 1.5, "offset": -0.1, "marker": "s", "z": 2},
+        "PC":       {"color": "#2980b9", "ls": "-",  "lw": 2.0, "offset": 0.1,  "marker": "^", "z": 3},
+        "NBM":      {"color": "#c0392b", "ls": "-",  "lw": 2.2, "offset": 0.3,  "marker": "o", "z": 4},
+        "NBM_Opt":  {"color": "#8e44ad", "ls": "-",  "lw": 3.0, "offset": 0.4,  "marker": "*", "z": 5}
     }
 
-    # 3. 데이터가 너무 많을 경우 마커가 뭉쳐 보이는 문제 해결 (Sepsis 등 고빈도 데이터용)
-    # 데이터 포인트가 60개를 넘어가면 마커를 5개 간격으로 표시
-    m_every = 1
-    if len(grid) > 60:
-        m_every = 5
+    m_every = 5 if len(grid) > 60 else 1
+    # Sepsis 등에서 노이즈 제거 (FIFA는 유지)
+    excluded = ["Poisson", "PC"] if "FIFA" not in name else []
 
-    # 4. Sepsis 데이터 예외 처리: Poisson과 PC 제외
-    excluded_models = []
-    if "Sepsis" in name:
-        excluded_models = ["Poisson", "PC"]
-
-    # 5. 모델별 PMF 플로팅
     for label, st in styles.items():
-        if label in model_dict and label not in excluded_models:
-            # x축 지터 적용
-            jittered_grid = grid + st["offset"]
-            
-            plt.plot(jittered_grid, model_dict[label],
-                     label=label,
-                     color=st["color"],
-                     ls=st["ls"],
-                     lw=st["lw"],
-                     marker=st["marker"],
-                     markersize=5,
-                     markevery=m_every, # 마커 밀도 조절
-                     alpha=0.8,         # 약간의 투명도로 겹침 부위 식별 가능하게 함
-                     zorder=st["z"])    # 중요 모델(NBM)을 가장 위에 그림
+        if label in model_dict and label not in excluded:
+            # 레이블 이름 다듬기
+            display_name = label
+            if label == "NBM_Opt": display_name = f"NBM (Optimal, K={opt_k})"
+            if label == "NBM": display_name = "NBM (Standard, K=4)"
 
-    # 6. 그래프 세부 설정 및 가독성 개선
-    plt.title(f"Model Fit Comparison: {name}", fontsize=16, fontweight='bold', pad=20)
-    plt.xlabel("Count Value", fontsize=12)
-    plt.ylabel("Probability Mass", fontsize=12)
+            plt.plot(grid + st["offset"], model_dict[label],
+                     label=display_name, color=st["color"], ls=st["ls"], lw=st["lw"],
+                     marker=st["marker"], markersize=6, markevery=m_every,
+                     alpha=0.9, zorder=st["z"])
 
-    # X축 범위 최적화: 확률값이 너무 낮은(1e-4 미만) 꼬리 부분은 잘라내어 시인성 확보
-    #relevant_idx = np.where(emp > 1e-4)[0]
-    #if len(relevant_idx) > 0:
-    #    plt.xlim(max(0, grid[relevant_idx[0]] - 2), grid[relevant_idx[-1]] + 5)
-
-    plt.legend(frameon=True, shadow=True, loc='upper right', fontsize=11)
-    plt.grid(axis='both', alpha=0.2, linestyle='--')
+    # X축 시작점 여백 확보 (Y축에 붙지 않게)
+    plt.xlim(grid[0]-2, grid[-1]+2)
     
+    plt.title(f"Model Fit Comparison: {name}", fontsize=16, fontweight='bold', pad=20)
+    plt.xlabel("Count Value"); plt.ylabel("Probability Mass")
+    plt.legend(frameon=True, shadow=True, loc='upper right', fontsize=10)
+    plt.grid(axis='both', alpha=0.2, ls='--')
     plt.tight_layout()
-    plt.savefig(save_path, dpi=300)
-    plt.close()
+    plt.savefig(save_path, dpi=300); plt.close()

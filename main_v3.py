@@ -6,9 +6,9 @@ from src.data_prep_v2 import load_fifa_counts, insurance_bimodal_to_count, load_
 from src.baselines import nb_pmf_mom_or_poisson, xmax_from_data
 from src.expansions_mom import fit_pc_pmf, fit_meixner_pmf, normalize_pmf
 from src.metrics_v2 import calculate_data_stats, empirical_pmf, l1_sum_abs
-from src.analysis_v2 import run_nbm_convergence_study, plot_nbm_l1_convergence, plot_nbm_convergence, plot_comparison
+from src.analysis_v2 import run_nbm_convergence_study, plot_nbm_l1_convergence, find_optimal_order, plot_comparison
 
-RESULT_DIR = "result_v3"
+RESULT_DIR = "result_final"
 os.makedirs(RESULT_DIR, exist_ok=True)
 
 def write_report_section(f, title, data_stats, table_data):
@@ -91,6 +91,11 @@ def main():
             emp = (empirical_pmf(data, grid[-1])[:len(grid)])
             emp /= emp.sum()
 
+            # --- 0. 최적 차수 사전 탐색 (수렴도 분석 수행) ---
+            df_conv, p_conv_dict = run_nbm_convergence_study(data, grid, emp)
+            opt_k = find_optimal_order(name, df_conv)
+            print(f"✨ {name} 최적 차수 발견: K={opt_k}")
+            
             p_nbm, i_nbm = fit_meixner_pmf(data, grid)
             p_pc, i_pc = fit_pc_pmf(data, grid)
             p_nb, i_nb = nb_pmf_mom_or_poisson(data, grid)
@@ -100,16 +105,19 @@ def main():
                 "Poisson": normalize_pmf(p_pois),
                 "PC": normalize_pmf(p_pc),
                 "NB": normalize_pmf(p_nb),
-                "NBM": normalize_pmf(p_nbm)
+                "NBM": normalize_pmf(p_nbm),
+                "NBM_Opt": normalize_pmf(p_conv_dict[opt_k])
             }
             
-            plot_comparison(name, grid, emp, m_dict, f"{RESULT_DIR}/plot_{name}_std.png")
+            plot_comparison(name, grid, emp, m_dict, f"{RESULT_DIR}/plot_{name}_std.png", opt_k=opt_k)
             
             std_rows = [
                 {"model": "Poisson", "L1_diff": l1_sum_abs(emp, m_dict["Poisson"]), "params": {"mu": mu, "theta": [0]}},
                 {"model": "PC", "L1_diff": l1_sum_abs(emp, m_dict["PC"]), "params": i_pc},
                 {"model": "NB", "L1_diff": l1_sum_abs(emp, m_dict["NB"]), "params": i_nb},
-                {"model": "NBM", "L1_diff": l1_sum_abs(emp, m_dict["NBM"]), "params": i_nbm}
+                {"model": "NBM", "L1_diff": l1_sum_abs(emp, m_dict["NBM"]), "params": i_nbm},
+                {"model": f"NBM_Opt, (K={opt_k})", "L1_diff": l1_sum_abs(emp, m_dict["NBM_Opt"]), 
+                 "params": {"beta": df_conv[opt_k, "beta"], "c": df_conv[opt_k, "c"], "theta": df_conv[opt_k, "theta"]}}
             ]
             write_report_section(f, f"{name}: STANDARD MODEL COMPARISON", stats_dict, std_rows)
 
@@ -122,12 +130,11 @@ def main():
             emp = (empirical_pmf(data, grid[-1])[:len(grid)])
             emp /= emp.sum()
 
-            df_conv, p_conv = run_nbm_convergence_study(data, grid, emp)
+            df_conv, _ = run_nbm_convergence_study(data, grid, emp)
             conv_rows = [{"model": r['model'], "L1_diff": r['L1_diff'], "params": {"beta": r['beta'], "c": r['c'], "theta": r['theta']}} for r in df_conv.iter_rows(named=True)]
 
             write_report_section(f, f"{name}: NBM CONVERGENCE REPORT", stats_dict, conv_rows)
             plot_nbm_l1_convergence(name, df_conv, os.path.join(RESULT_DIR, f"plot_nbm_L1_{name}.png"))
-            plot_nbm_convergence(name, grid, emp, p_conv, df_conv, f"{RESULT_DIR}/plot_nbm_conv_{name}.png")
             
     print(f"✅ 분석 완료! '{RESULT_DIR}' 폴더에서 결과표를 확인하세요.")
 
